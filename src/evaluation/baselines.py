@@ -93,9 +93,9 @@ class MultiEmbeddingBaseline:
     def __init__(self):
         # Use 2-3 strong general models
         self.models = {
-            'mpnet': SentenceTransformer('all-mpnet-base-v2'),
-            'minilm': SentenceTransformer('all-MiniLM-L6-v2'),
-            'roberta': SentenceTransformer('roberta-base-nli-mean-tokens')
+            'mpnet': SentenceTransformer('all-mpnet-base-v2'),  # 768 dim
+            'roberta': SentenceTransformer('roberta-base-nli-mean-tokens'),  # 768 dim
+            'distilbert': SentenceTransformer('distilbert-base-nli-mean-tokens')  # 768 dim
         }
 
     def get_multi_embedding(self, text: str, method='concat'):
