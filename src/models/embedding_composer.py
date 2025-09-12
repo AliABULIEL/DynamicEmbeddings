@@ -9,6 +9,8 @@ from config.settings import DOMAINS, EMBEDDING_DIM
 from src.models.domain_classifier import DomainClassifier
 from src.models.domain_embedders import DomainEmbedderManager
 from src.utils.logger import get_logger
+from typing import Dict, List, Optional, Union
+
 
 logger = get_logger(__name__)
 
