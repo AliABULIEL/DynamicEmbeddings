@@ -1,5 +1,5 @@
 """
-Central configuration file for all project settings
+Enhanced configuration file with optimized settings
 """
 import os
 from pathlib import Path
@@ -24,12 +24,17 @@ MAX_SEQUENCE_LENGTH = 512
 BATCH_SIZE = 32
 
 # Evaluation settings
-EVALUATION_DATASETS = ['ag_news', 'dbpedia_14', 'stsb']
+EVALUATION_DATASETS = ['ag_news', 'dbpedia', 'stsb']
 RANDOM_SEED = 42
-TEST_SAMPLE_SIZE = 2800  # For quick testing, use None for full dataset
+TEST_SAMPLE_SIZE = 1000  # For quick testing, use None for full dataset
 
 # Composition methods
 COMPOSITION_METHODS = ['weighted_sum', 'attention', 'max_pooling', 'learned_gate']
+
+# Optimized settings based on experiments
+OPTIMAL_K_FOR_CLASSIFICATION = 4  # Top-4 domains work best
+USE_TASK_SPECIFIC_COMPOSITION = True  # Different strategies for different tasks
+ALIGN_EMBEDDINGS_FOR_NEWS = True  # Alignment helps for news data
 
 # Logging
 LOG_LEVEL = "INFO"

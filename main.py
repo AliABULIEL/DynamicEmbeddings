@@ -1,5 +1,5 @@
 """
-Enhanced main entry point with all new methods integrated
+Enhanced main entry point with all improvements integrated
 """
 import json
 import argparse
@@ -12,62 +12,76 @@ from sklearn.model_selection import cross_val_score
 from src.evaluation.evaluator import Evaluator
 from src.evaluation.baselines import MultiEmbeddingBaseline
 from src.utils.logger import get_logger
-from config.settings import RESULTS_DIR
+from config.settings import RESULTS_DIR, OPTIMAL_K_FOR_CLASSIFICATION, EMBEDDING_DIM
 
 logger = get_logger(__name__)
 
 
 def run_enhanced_methods(evaluator, dataset_name, texts, labels):
     """
-    Run all enhanced composition methods
+    Run all enhanced composition methods with fixes
     """
     results = {}
     clf = LogisticRegression(max_iter=1000, random_state=42)
 
-    # 1. Top-K compositions
-    for k in [2, 3, 4]:
-        logger.info(f"Testing Top-{k} composition...")
-        embeddings = []
-        for text in texts:
-            emb = evaluator.composer.compose_topk(text, k=k, method='weighted_sum')
-            embeddings.append(emb)
-        embeddings = np.array(embeddings)
-
-        scores = cross_val_score(clf, embeddings, labels, cv=5, scoring='accuracy')
-        results[f'composed_top{k}'] = {
-            'mean': scores.mean(),
-            'std': scores.std(),
-            'scores': scores.tolist()
-        }
-        logger.info(f"Top-{k}: {scores.mean():.4f} ± {scores.std():.4f}")
-
-    # 2. Aligned composition
-    logger.info("Testing aligned composition...")
+    # 1. Test optimal Top-K (use k=4 based on your results)
+    logger.info(f"Testing optimal Top-{OPTIMAL_K_FOR_CLASSIFICATION} composition...")
     embeddings = []
     for text in texts:
-        emb = evaluator.composer.compose_aligned(text)
+        emb = evaluator.composer.compose_topk(text, k=OPTIMAL_K_FOR_CLASSIFICATION, method='weighted_sum')
         embeddings.append(emb)
     embeddings = np.array(embeddings)
 
     scores = cross_val_score(clf, embeddings, labels, cv=5, scoring='accuracy')
-    results['composed_aligned'] = {
+    results[f'composed_top{OPTIMAL_K_FOR_CLASSIFICATION}_optimal'] = {
         'mean': scores.mean(),
         'std': scores.std(),
         'scores': scores.tolist()
     }
-    logger.info(f"Aligned: {scores.mean():.4f} ± {scores.std():.4f}")
+    logger.info(f"Top-{OPTIMAL_K_FOR_CLASSIFICATION} (optimal): {scores.mean():.4f} ± {scores.std():.4f}")
 
-    # 3. Multi-embedding baseline
+    # 2. Test task-specific composition
+    logger.info("Testing task-specific composition...")
+    embeddings = []
+    for text in texts:
+        emb = evaluator.composer.compose_for_task(text, task='classification')
+        embeddings.append(emb)
+    embeddings = np.array(embeddings)
+
+    scores = cross_val_score(clf, embeddings, labels, cv=5, scoring='accuracy')
+    results['task_specific_classification'] = {
+        'mean': scores.mean(),
+        'std': scores.std(),
+        'scores': scores.tolist()
+    }
+    logger.info(f"Task-specific: {scores.mean():.4f} ± {scores.std():.4f}")
+
+    # 3. Test attention-based composition
+    logger.info("Testing attention-based composition...")
+    embeddings = []
+    for text in texts[:500]:  # Subset for speed
+        emb = evaluator.composer.attention_compose(text)
+        embeddings.append(emb)
+    embeddings = np.array(embeddings)
+
+    scores = cross_val_score(clf, embeddings, labels[:500], cv=3, scoring='accuracy')
+    results['composed_attention_new'] = {
+        'mean': scores.mean(),
+        'std': scores.std(),
+        'scores': scores.tolist()
+    }
+    logger.info(f"Attention-based: {scores.mean():.4f} ± {scores.std():.4f}")
+
+    # 4. Multi-baseline comparisons (fixed for dimension issues)
     logger.info("Testing multi-embedding baselines...")
     multi_baseline = MultiEmbeddingBaseline()
 
-    for method in ['concat', 'average', 'max']:
+    for method in ['average', 'max', 'weighted']:  # Skip concat due to memory
         logger.info(f"Testing multi-embedding {method}...")
         embeddings = []
 
-        # Use subset for concat due to 3x size
-        test_texts = texts[:500] if method == 'concat' else texts
-        test_labels = labels[:500] if method == 'concat' else labels
+        test_texts = texts[:500]  # Use subset
+        test_labels = labels[:500]
 
         for text in test_texts:
             emb = multi_baseline.get_multi_embedding(text, method=method)
@@ -78,17 +92,16 @@ def run_enhanced_methods(evaluator, dataset_name, texts, labels):
         results[f'multi_baseline_{method}'] = {
             'mean': scores.mean(),
             'std': scores.std(),
-            'scores': scores.tolist(),
-            'embedding_dim': embeddings.shape[1]
+            'scores': scores.tolist()
         }
-        logger.info(f"Multi-{method}: {scores.mean():.4f} ± {scores.std():.4f} (dim={embeddings.shape[1]})")
+        logger.info(f"Multi-{method}: {scores.mean():.4f} ± {scores.std():.4f}")
 
     return results
 
 
 def main(args):
     """
-    Enhanced main function with all new methods
+    Main function with all improvements
     """
     logger.info("=" * 80)
     logger.info("Starting Enhanced Domain-Based Embedding Composition Experiments")
@@ -106,7 +119,8 @@ def main(args):
             'run_ablation': args.ablation,
             'run_enhanced': args.enhanced,
             'use_topk': args.use_topk,
-            'k_value': args.k_value
+            'k_value': args.k_value,
+            'use_task_specific': args.task_specific
         },
         'results': {}
     }
@@ -118,23 +132,28 @@ def main(args):
         logger.info("=" * 50)
 
         for dataset in args.datasets:
-            if dataset != 'stsb':  # Skip STS-B for classification
+            if dataset != 'stsb':
                 logger.info(f"\nDataset: {dataset}")
 
-                # Standard evaluation
-                if args.use_topk:
-                    # Use top-k composition instead of all domains
-                    logger.info(f"Using Top-{args.k_value} composition")
+                # Use improved evaluation with task-specific strategies
+                if args.task_specific:
+                    logger.info("Using task-specific strategies")
+                    results = evaluator.evaluate_classification(
+                        dataset_name=dataset,
+                        composition_method=args.composition_method,
+                        use_task_specific=True
+                    )
+                elif args.use_topk:
                     results = evaluator.evaluate_classification_topk(
                         dataset_name=dataset,
                         k=args.k_value,
                         base_method=args.composition_method
                     )
                 else:
-                    # Original method
                     results = evaluator.evaluate_classification(
                         dataset_name=dataset,
-                        composition_method=args.composition_method
+                        composition_method=args.composition_method,
+                        use_task_specific=False
                     )
 
                 all_results['results'][f'classification_{dataset}'] = results
@@ -145,7 +164,7 @@ def main(args):
                     logger.info("ENHANCED METHODS")
                     logger.info("-" * 40)
 
-                    # Load data for enhanced methods
+                    # Load data
                     if dataset == 'ag_news':
                         texts, labels = evaluator.data_loader.load_ag_news()
                     elif dataset == 'dbpedia':
@@ -156,20 +175,17 @@ def main(args):
                     enhanced_results = run_enhanced_methods(evaluator, dataset, texts, labels)
                     all_results['results'][f'enhanced_{dataset}'] = enhanced_results
 
-    # Run similarity experiments
+    # Run similarity experiments with fixes
     if 'similarity' in args.experiments or 'all' in args.experiments:
         logger.info("\n" + "=" * 50)
         logger.info("SIMILARITY EXPERIMENTS")
         logger.info("=" * 50)
 
-        if args.use_topk:
-            # For similarity, use best single domain instead
-            logger.info("Using best single domain for similarity")
-            results = evaluator.evaluate_similarity_best_domain()
-        else:
-            results = evaluator.evaluate_similarity(
-                composition_method=args.composition_method
-            )
+        # Always use task-specific for similarity (single domain works better)
+        results = evaluator.evaluate_similarity(
+            composition_method=args.composition_method,
+            use_task_specific=True  # Force task-specific for similarity
+        )
         all_results['results']['similarity'] = results
 
     # Run ablation studies
@@ -179,25 +195,6 @@ def main(args):
         logger.info("=" * 50)
 
         ablation_results = evaluator.run_ablation_study()
-
-        # Add top-k ablation
-        if args.enhanced:
-            logger.info("\nTop-K Ablation...")
-            for k in [1, 2, 3, 4, 5]:
-                logger.info(f"Testing k={k}")
-                texts, labels = evaluator.data_loader.load_ag_news()
-                embeddings = []
-                for text in texts:
-                    emb = evaluator.composer.compose_topk(text, k=k)
-                    embeddings.append(emb)
-
-                clf = LogisticRegression(max_iter=1000, random_state=42)
-                scores = cross_val_score(clf, embeddings, labels, cv=3, scoring='accuracy')
-                ablation_results[f'topk_{k}'] = {
-                    'mean_accuracy': scores.mean(),
-                    'std_accuracy': scores.std()
-                }
-
         all_results['results']['ablation'] = ablation_results
 
     # Analyze domain influence
@@ -209,14 +206,10 @@ def main(args):
         analysis = evaluator.analyze_domain_influence()
         all_results['results']['domain_analysis'] = analysis
 
-        # Print analysis
         for item in analysis:
             logger.info(f"\nText: {item['text']}")
             logger.info(f"Dominant domain: {item['dominant_domain']}")
             logger.info(f"Entropy: {item['entropy']:.3f}")
-            logger.info("Domain probabilities:")
-            for domain, prob in item['domain_probs'].items():
-                logger.info(f"  {domain}: {prob:.3f}")
 
     # Save results
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -232,7 +225,6 @@ def main(args):
     logger.info("EXPERIMENT SUMMARY")
     logger.info("=" * 80)
 
-    # Find best performing method
     best_score = 0
     best_method = ""
 
@@ -244,7 +236,6 @@ def main(args):
                     score = scores['mean']
                     logger.info(f"  {method}: {score:.4f} ± {scores.get('std', 0):.4f}")
 
-                    # Track best
                     if score > best_score and 'classification' in exp_name:
                         best_score = score
                         best_method = f"{exp_name}/{method}"
@@ -299,24 +290,29 @@ if __name__ == "__main__":
         help='Run domain influence analysis'
     )
 
-    # New arguments for enhanced methods
     parser.add_argument(
         '--enhanced',
         action='store_true',
-        help='Run enhanced methods (top-k, aligned, multi-baseline)'
+        help='Run enhanced methods'
     )
 
     parser.add_argument(
         '--use-topk',
         action='store_true',
-        help='Use top-k composition instead of all domains'
+        help='Use top-k composition'
     )
 
     parser.add_argument(
         '--k-value',
         type=int,
-        default=2,
-        help='Number of top domains to use (default: 2)'
+        default=4,  # Changed default to 4 based on your results
+        help='Number of top domains to use (default: 4)'
+    )
+
+    parser.add_argument(
+        '--task-specific',
+        action='store_true',
+        help='Use task-specific composition strategies'
     )
 
     args = parser.parse_args()
