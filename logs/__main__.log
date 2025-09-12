@@ -1,0 +1,40 @@
+2025-09-12 11:42:01,624 - __main__ - INFO - ============================================================
+2025-09-12 11:42:01,625 - __main__ - INFO - DOWNLOADING ALL REQUIRED MODELS
+2025-09-12 11:42:01,625 - __main__ - INFO - ============================================================
+2025-09-12 11:42:01,626 - __main__ - WARNING - ✗ No GPU available, will use CPU (slower)
+2025-09-12 11:42:01,626 - __main__ - INFO - 
+----------------------------------------
+2025-09-12 11:42:01,626 - __main__ - INFO - Downloading zero-shot classification models...
+2025-09-12 11:42:01,626 - __main__ - INFO - Downloading default zero-shot model: facebook/bart-large-mnli
+2025-09-12 11:43:16,342 - __main__ - INFO - ✓ Successfully downloaded default zero-shot model
+2025-09-12 11:43:16,343 - __main__ - INFO - Downloading backup zero-shot model: MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli
+2025-09-12 11:43:52,588 - __main__ - INFO - ✓ Successfully downloaded backup zero-shot model
+2025-09-12 11:43:52,643 - __main__ - INFO - 
+----------------------------------------
+2025-09-12 11:43:52,643 - __main__ - INFO - Downloading domain-specific models...
+2025-09-12 11:43:52,643 - __main__ - INFO - Downloading scientific model: allenai/scibert_scivocab_uncased
+2025-09-12 11:44:25,047 - __main__ - INFO - ✓ Successfully downloaded scientific model
+2025-09-12 11:44:25,047 - __main__ - INFO - Downloading news model: sentence-transformers/all-mpnet-base-v2
+2025-09-12 11:45:13,960 - __main__ - INFO - ✓ Successfully downloaded news model
+2025-09-12 11:45:13,961 - __main__ - INFO - Downloading medical model: dmis-lab/biobert-v1.1
+2025-09-12 11:45:52,342 - __main__ - INFO - ✓ Successfully downloaded medical model
+2025-09-12 11:45:52,342 - __main__ - INFO - Downloading legal model: nlpaueb/legal-bert-base-uncased
+2025-09-12 11:46:44,268 - __main__ - INFO - ✓ Successfully downloaded legal model
+2025-09-12 11:46:44,269 - __main__ - INFO - Downloading social model: vinai/bertweet-base
+2025-09-12 11:47:29,873 - __main__ - INFO - ✓ Successfully downloaded social model
+2025-09-12 11:47:29,904 - __main__ - INFO - 
+----------------------------------------
+2025-09-12 11:47:29,904 - __main__ - INFO - Downloading baseline models...
+2025-09-12 11:47:29,904 - __main__ - INFO - Downloading baseline bert-base: sentence-transformers/bert-base-nli-mean-tokens
+2025-09-12 11:48:15,545 - __main__ - INFO - ✓ Successfully downloaded bert-base
+2025-09-12 11:48:15,546 - __main__ - INFO - Downloading baseline roberta: sentence-transformers/roberta-base-nli-mean-tokens
+2025-09-12 11:48:57,101 - __main__ - INFO - ✓ Successfully downloaded roberta
+2025-09-12 11:48:57,103 - __main__ - INFO - Downloading baseline mpnet: sentence-transformers/all-mpnet-base-v2
+2025-09-12 11:49:05,546 - __main__ - INFO - ✓ Successfully downloaded mpnet
+2025-09-12 11:49:05,550 - __main__ - INFO - Downloading baseline minilm: sentence-transformers/all-MiniLM-L6-v2
+2025-09-12 11:49:08,245 - __main__ - INFO - ✓ Successfully downloaded minilm
+2025-09-12 11:49:08,245 - __main__ - INFO - 
+============================================================
+2025-09-12 11:49:08,245 - __main__ - INFO - ✓ All models downloaded successfully!
+2025-09-12 11:49:08,245 - __main__ - INFO - You can now run experiments without waiting for downloads
+2025-09-12 11:49:08,245 - __main__ - INFO - ============================================================

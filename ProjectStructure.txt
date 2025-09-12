@@ -1,0 +1,44 @@
+domain-embedding-composition/
+├── config/
+│   ├── __init__.py
+│   ├── settings.py                 # All configuration constants
+│   └── model_configs.py            # Model names and paths
+├── src/
+│   ├── __init__.py
+│   ├── data/
+│   │   ├── __init__.py
+│   │   ├── dataset_loader.py       # Load benchmark datasets
+│   │   └── data_processor.py       # Process and prepare data
+│   ├── models/
+│   │   ├── __init__.py
+│   │   ├── domain_classifier.py    # Zero-shot domain classification
+│   │   ├── domain_embedders.py     # Load and manage domain models
+│   │   └── embedding_composer.py   # Composition strategies
+│   ├── evaluation/
+│   │   ├── __init__.py
+│   │   ├── metrics.py              # Evaluation metrics
+│   │   ├── baselines.py            # Baseline models
+│   │   └── evaluator.py            # Main evaluation logic
+│   ├── utils/
+│   │   ├── __init__.py
+│   │   ├── logger.py               # Logging utilities
+│   │   └── helpers.py              # Helper functions
+│   └── experiments/
+│       ├── __init__.py
+│       ├── run_classification.py   # Classification experiments
+│       ├── run_similarity.py       # Similarity experiments
+│       └── run_ablations.py        # Ablation studies
+├── scripts/
+│   ├── download_models.py          # Pre-download all models
+│   └── run_all_experiments.py      # Main entry point
+├── results/
+│   └── .gitkeep
+├── logs/
+│   └── .gitkeep
+├── tests/
+│   ├── __init__.py
+│   └── test_components.py
+├── requirements.txt
+├── setup.py
+├── README.md
+└── main.py                          # Main entry point
