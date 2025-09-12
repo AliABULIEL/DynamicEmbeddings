@@ -43,16 +43,27 @@ def main():
     logger.info("=" * 60)
 
     # Define all configurations to test
+    # Define all configurations to test
     configurations = [
         # Test all composition methods on AG News
         ("weighted_sum", "ag_news", "classification"),
+        ("weighted_sum", "ag_news", "similarity"),
+        ("weighted_sum", "dbpedia", "similarity"),
         ("attention", "ag_news", "classification"),
         ("max_pooling", "ag_news", "classification"),
         ("learned_gate", "ag_news", "classification"),
 
-        # Test best method on all datasets
+        # Test all composition methods on DBPedia (ADD THESE)
         ("weighted_sum", "dbpedia", "classification"),
-        ("weighted_sum", "ag_news", "similarity"),
+        ("attention", "dbpedia", "classification"),
+        ("max_pooling", "dbpedia", "classification"),
+        ("learned_gate", "dbpedia", "classification"),
+
+        # Test on 20 newsgroups (ADD THIS)
+        ("weighted_sum", "twenty_newsgroups", "classification"),
+
+        # Similarity tests (already there but wrong dataset)
+        ("weighted_sum", "stsb", "similarity"),  # Fix: should be stsb not ag_news
 
         # Run with ablation
         ("weighted_sum", "ag_news", "all"),
