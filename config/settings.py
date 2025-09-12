@@ -26,7 +26,7 @@ BATCH_SIZE = 32
 # Evaluation settings
 EVALUATION_DATASETS = ['ag_news', 'dbpedia_14', 'stsb']
 RANDOM_SEED = 42
-TEST_SAMPLE_SIZE = 1000  # For quick testing, use None for full dataset
+TEST_SAMPLE_SIZE = 2800  # For quick testing, use None for full dataset
 
 # Composition methods
 COMPOSITION_METHODS = ['weighted_sum', 'attention', 'max_pooling', 'learned_gate']
