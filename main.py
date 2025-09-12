@@ -105,7 +105,7 @@ def main(args):
             'datasets': args.datasets,
             'run_ablation': args.ablation,
             'run_enhanced': args.enhanced,
-            'use_topk': args.topk,
+            'use_topk': args.use_topk,
             'k_value': args.k_value
         },
         'results': {}
