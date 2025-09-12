@@ -11,7 +11,6 @@ from src.models.domain_embedders import DomainEmbedderManager
 from src.utils.logger import get_logger
 from typing import Dict, List, Optional, Union
 
-
 logger = get_logger(__name__)
 
 CompositionMethod = Literal['weighted_sum', 'attention', 'max_pooling', 'learned_gate']
@@ -35,6 +34,18 @@ class EmbeddingComposer:
 
         logger.info("EmbeddingComposer initialized successfully")
 
+    def compose_aligned(self, text: str) -> np.ndarray:
+        """
+        Compose with alignment
+        """
+        domain_probs = self.classifier.classify(text)
+        domain_embeddings = self.embedder_manager.get_all_embeddings(text)
+
+        # Align embeddings
+        aligner = EmbeddingAligner()
+        aligned_embeddings = aligner.align_embeddings(domain_embeddings)
+
+        return self._weighted_sum(aligned_embeddings, domain_probs)
     def compose(self,
                 text: str,
                 method: CompositionMethod = 'weighted_sum',
@@ -297,3 +308,63 @@ class EmbeddingComposer:
             final_embedding += gates[i] * embeddings[domain]
 
         return final_embedding
+
+    # Add to src/models/embedding_composer.py
+
+    def compose_topk(self,
+                     text: str,
+                     k: int = 2,
+                     method: str = 'weighted_sum') -> np.ndarray:
+        """
+        Compose using only top-k domains
+        """
+        # Get domain probabilities
+        domain_probs = self.classifier.classify(text)
+
+        # Get top-k domains
+        top_indices = np.argsort(domain_probs)[-k:]
+
+        # Zero out non-top domains
+        masked_probs = np.zeros_like(domain_probs)
+        masked_probs[top_indices] = domain_probs[top_indices]
+        masked_probs = masked_probs / masked_probs.sum()  # Renormalize
+
+        # Get embeddings
+        domain_embeddings = self.embedder_manager.get_all_embeddings(text)
+
+        # Compose with masked probabilities
+        return self._weighted_sum(domain_embeddings, masked_probs)
+
+
+# Add to src/models/embedding_composer.py
+
+class EmbeddingAligner:
+    """
+    Project embeddings to common space before composition
+    """
+
+    def __init__(self, embedding_dim=768):
+        self.projection_matrices = {}
+        self.embedding_dim = embedding_dim
+
+    def align_embeddings(self, embeddings_dict):
+        """
+        Project all embeddings to a common space using CCA or linear projection
+        """
+        aligned = {}
+
+        # Use news embedding space as reference (since it performs best)
+        reference_emb = embeddings_dict['news']
+
+        for domain, emb in embeddings_dict.items():
+            if domain == 'news':
+                aligned[domain] = emb
+            else:
+                # Simple L2 normalization as alignment
+                aligned[domain] = emb / (np.linalg.norm(emb) + 1e-9)
+                aligned[domain] = aligned[domain] * np.linalg.norm(reference_emb)
+
+        return aligned
+
+
+# Use in compose method

@@ -79,3 +79,38 @@ class BaselineModels:
             self.load_model(model_name)
 
         return self.models[model_name].encode(texts, convert_to_numpy=True)
+
+
+# Add to src/evaluation/baselines.py
+
+class MultiEmbeddingBaseline:
+    """
+    Concatenate multiple embeddings as baseline
+    """
+
+    def __init__(self):
+        # Use 2-3 strong general models
+        self.models = {
+            'mpnet': SentenceTransformer('all-mpnet-base-v2'),
+            'minilm': SentenceTransformer('all-MiniLM-L6-v2'),
+            'roberta': SentenceTransformer('roberta-base-nli-mean-tokens')
+        }
+
+    def get_multi_embedding(self, text: str, method='concat'):
+        """
+        Get multi-model embedding
+        """
+        embeddings = []
+        for name, model in self.models.items():
+            emb = model.encode(text, convert_to_numpy=True)
+            embeddings.append(emb)
+
+        if method == 'concat':
+            # Concatenate all embeddings
+            return np.concatenate(embeddings)
+        elif method == 'average':
+            # Average all embeddings
+            return np.mean(embeddings, axis=0)
+        elif method == 'max':
+            # Max pool across embeddings
+            return np.max(embeddings, axis=0)
