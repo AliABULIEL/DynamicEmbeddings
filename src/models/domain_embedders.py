@@ -29,18 +29,7 @@ class TransformerEmbedder:
         self.model = self.model.to(self.device)
         self.model.eval()
 
-    def encode(self, texts: Union[str, List[str]],
-               batch_size: int = 32) -> np.ndarray:
-        """
-        Encode texts into embeddings
-
-        Args:
-            texts: Single text or list of texts
-            batch_size: Batch size for encoding
-
-        Returns:
-            Embeddings array
-        """
+    def encode(self, texts: Union[str, List[str]], batch_size: int = 32) -> np.ndarray:
         if isinstance(texts, str):
             texts = [texts]
 
@@ -50,29 +39,89 @@ class TransformerEmbedder:
             for i in range(0, len(texts), batch_size):
                 batch_texts = texts[i:i + batch_size]
 
-                # Tokenize
-                encoded = self.tokenizer(
-                    batch_texts,
-                    padding=True,
-                    truncation=True,
-                    max_length=MAX_SEQUENCE_LENGTH,
-                    return_tensors='pt'
-                )
+                try:
+                    # Tokenize with better error handling
+                    encoded = self.tokenizer(
+                        batch_texts,
+                        padding=True,
+                        truncation=True,
+                        max_length=128,  # Reduce from 512
+                        return_tensors='pt',
+                        return_attention_mask=True,
+                        add_special_tokens=True
+                    )
 
-                # Move to device
-                encoded = {k: v.to(self.device) for k, v in encoded.items()}
+                    # Move to device
+                    encoded = {k: v.to(self.device) for k, v in encoded.items()}
 
-                # Get embeddings
-                outputs = self.model(**encoded)
+                    # Get embeddings
+                    outputs = self.model(**encoded)
 
-                # Mean pooling over tokens
-                embeddings = outputs.last_hidden_state.mean(dim=1)
+                    # Mean pooling
+                    attention_mask = encoded['attention_mask']
+                    embeddings = outputs.last_hidden_state
 
-                # Move to CPU and convert to numpy
-                embeddings = embeddings.cpu().numpy()
-                all_embeddings.append(embeddings)
+                    # Proper mean pooling with attention mask
+                    input_mask_expanded = attention_mask.unsqueeze(-1).expand(embeddings.size()).float()
+                    sum_embeddings = torch.sum(embeddings * input_mask_expanded, 1)
+                    sum_mask = torch.clamp(input_mask_expanded.sum(1), min=1e-9)
+                    embeddings = sum_embeddings / sum_mask
+
+                    embeddings = embeddings.cpu().numpy()
+                    all_embeddings.append(embeddings)
+
+                except Exception as e:
+                    # If a model fails, use zeros
+                    print(f"Warning: {self.model_name} failed on batch: {e}")
+                    batch_size_actual = len(batch_texts)
+                    fallback = np.zeros((batch_size_actual, 768))
+                    all_embeddings.append(fallback)
 
         return np.vstack(all_embeddings) if len(all_embeddings) > 1 else all_embeddings[0]
+    # def encode(self, texts: Union[str, List[str]],
+    #            batch_size: int = 32) -> np.ndarray:
+    #     """
+    #     Encode texts into embeddings
+    #
+    #     Args:
+    #         texts: Single text or list of texts
+    #         batch_size: Batch size for encoding
+    #
+    #     Returns:
+    #         Embeddings array
+    #     """
+    #     if isinstance(texts, str):
+    #         texts = [texts]
+    #
+    #     all_embeddings = []
+    #
+    #     with torch.no_grad():
+    #         for i in range(0, len(texts), batch_size):
+    #             batch_texts = texts[i:i + batch_size]
+    #
+    #             # Tokenize
+    #             encoded = self.tokenizer(
+    #                 batch_texts,
+    #                 padding=True,
+    #                 truncation=True,
+    #                 max_length=MAX_SEQUENCE_LENGTH,
+    #                 return_tensors='pt'
+    #             )
+    #
+    #             # Move to device
+    #             encoded = {k: v.to(self.device) for k, v in encoded.items()}
+    #
+    #             # Get embeddings
+    #             outputs = self.model(**encoded)
+    #
+    #             # Mean pooling over tokens
+    #             embeddings = outputs.last_hidden_state.mean(dim=1)
+    #
+    #             # Move to CPU and convert to numpy
+    #             embeddings = embeddings.cpu().numpy()
+    #             all_embeddings.append(embeddings)
+    #
+    #     return np.vstack(all_embeddings) if len(all_embeddings) > 1 else all_embeddings[0]
 
 
 class DomainEmbedderManager:
