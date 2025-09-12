@@ -12,6 +12,7 @@ from src.models.embedding_composer import EmbeddingComposer
 from src.evaluation.baselines import BaselineModels
 from src.data.dataset_loader import DatasetLoader
 from src.utils.logger import get_logger
+from scipy.stats import spearmanr, pearsonr
 
 logger = get_logger(__name__)
 
@@ -348,19 +349,19 @@ class Evaluator:
 
         similarities = []
         for text1, text2 in text_pairs:
-            # Get best domain for each text
-            probs1 = self.classifier.classify(text1)
-            probs2 = self.classifier.classify(text2)
+            # Fix: Use composer.classifier instead of self.classifier
+            probs1 = self.composer.classifier.classify(text1)
+            probs2 = self.composer.classifier.classify(text2)
 
-            best_domain1 = self.domains[np.argmax(probs1)]
-            best_domain2 = self.domains[np.argmax(probs2)]
+            best_domain1 = self.composer.domains[np.argmax(probs1)]
+            best_domain2 = self.composer.domains[np.argmax(probs2)]
 
             # Use the domain that's best for both (highest average prob)
             avg_probs = (probs1 + probs2) / 2
-            best_domain = self.domains[np.argmax(avg_probs)]
+            best_domain = self.composer.domains[np.argmax(avg_probs)]
 
-            emb1 = self.embedder_manager.get_embedding(text1, best_domain)
-            emb2 = self.embedder_manager.get_embedding(text2, best_domain)
+            emb1 = self.composer.embedder_manager.get_embedding(text1, best_domain)
+            emb2 = self.composer.embedder_manager.get_embedding(text2, best_domain)
 
             similarity = np.dot(emb1, emb2) / (np.linalg.norm(emb1) * np.linalg.norm(emb2))
             similarities.append(similarity)
