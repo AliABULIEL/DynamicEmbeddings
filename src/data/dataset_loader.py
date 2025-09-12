@@ -32,15 +32,6 @@ class DatasetLoader:
     def load_ag_news(self) -> Tuple[List[str], List[int]]:
         """
         Load AG News dataset for classification
-
-        AG News has 4 classes:
-        - 0: World
-        - 1: Sports
-        - 2: Business
-        - 3: Science/Technology
-
-        Returns:
-            Tuple of (texts, labels)
         """
         logger.info("Loading AG News dataset...")
 
@@ -52,6 +43,10 @@ class DatasetLoader:
 
             texts = dataset['text']
             labels = dataset['label']
+
+            # IMPORTANT: Convert to Python list to avoid type issues
+            texts = list(texts)
+            labels = [int(label) for label in labels]  # Convert to Python int
 
             logger.info(f"Loaded {len(texts)} samples from AG News")
             logger.info(f"Label distribution: {np.bincount(labels)}")
@@ -65,15 +60,6 @@ class DatasetLoader:
     def load_dbpedia(self) -> Tuple[List[str], List[int]]:
         """
         Load DBPedia dataset for classification
-
-        DBPedia has 14 classes:
-        - Company, Educational Institution, Artist, Athlete,
-        - Office Holder, Mean of Transportation, Building,
-        - Natural Place, Village, Animal, Plant, Album, Film,
-        - Written Work
-
-        Returns:
-            Tuple of (texts, labels)
         """
         logger.info("Loading DBPedia dataset...")
 
@@ -83,14 +69,12 @@ class DatasetLoader:
             else:
                 dataset = load_dataset('dbpedia_14', split='test')
 
-            # Combine title and content for better context
-            texts = []
-            for item in dataset:
-                # DBPedia has 'title' and 'content' fields
-                combined_text = f"{item['title']}. {item['content']}"
-                texts.append(combined_text)
+            # Combine title and content
+            texts = [f"{title}. {content}" for title, content in
+                     zip(dataset['title'], dataset['content'])]
 
-            labels = dataset['label']
+            # Convert labels to Python int list
+            labels = [int(label) for label in dataset['label']]
 
             logger.info(f"Loaded {len(texts)} samples from DBPedia")
 
