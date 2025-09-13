@@ -1,44 +1,44 @@
-domain-embedding-composition/
+dynamic-embeddings-v2/
 ├── config/
 │   ├── __init__.py
-│   ├── settings.py                 # All configuration constants
-│   └── model_configs.py            # Model names and paths
+│   └── model_config.py            # Model and training configurations
+│
 ├── src/
 │   ├── __init__.py
-│   ├── data/
-│   │   ├── __init__.py
-│   │   ├── dataset_loader.py       # Load benchmark datasets
-│   │   └── data_processor.py       # Process and prepare data
+│   │
 │   ├── models/
 │   │   ├── __init__.py
-│   │   ├── domain_classifier.py    # Zero-shot domain classification
-│   │   ├── domain_embedders.py     # Load and manage domain models
-│   │   └── embedding_composer.py   # Composition strategies
+│   │   ├── experts.py             # Expert encoder implementations
+│   │   ├── router.py              # MoE router with learned routing
+│   │   ├── fusion.py              # AdapterFusion layers
+│   │   └── dynamic_model.py       # Main dynamic embedding model
+│   │
+│   ├── training/
+│   │   ├── __init__.py
+│   │   ├── trainer.py             # Training logic with curriculum learning
+│   │   ├── dataset.py             # Contrastive learning datasets
+│   │   └── losses.py              # Custom loss functions
+│   │
 │   ├── evaluation/
 │   │   ├── __init__.py
-│   │   ├── metrics.py              # Evaluation metrics
-│   │   ├── baselines.py            # Baseline models
-│   │   └── evaluator.py            # Main evaluation logic
-│   ├── utils/
-│   │   ├── __init__.py
-│   │   ├── logger.py               # Logging utilities
-│   │   └── helpers.py              # Helper functions
-│   └── experiments/
+│   │   ├── mteb_evaluator.py      # MTEB benchmark evaluation
+│   │   ├── domain_shift.py        # Domain shift evaluation
+│   │   └── metrics.py             # Evaluation metrics
+│   │
+│   └── utils/
 │       ├── __init__.py
-│       ├── run_classification.py   # Classification experiments
-│       ├── run_similarity.py       # Similarity experiments
-│       └── run_ablations.py        # Ablation studies
+│       ├── data_loader.py         # Data loading utilities
+│       └── visualization.py       # Routing analysis visualization
+│
 ├── scripts/
-│   ├── download_models.py          # Pre-download all models
-│   └── run_all_experiments.py      # Main entry point
-├── results/
-│   └── .gitkeep
-├── logs/
-│   └── .gitkeep
-├── tests/
-│   ├── __init__.py
-│   └── test_components.py
+│   ├── train.py                   # Main training script
+│   ├── evaluate.py                # Evaluation script
+│   └── download_models.py         # Download required models
+│
+├── experiments/
+│   ├── run_mteb.py               # Run MTEB benchmarks
+│   └── ablation_study.py         # Ablation studies
+│
 ├── requirements.txt
 ├── setup.py
-├── README.md
-└── main.py                          # Main entry point
+└── README.md
