@@ -263,7 +263,7 @@ class Evaluator:
         return results
 
     def evaluate_classification_topk(self, dataset_name: str, k: int = 2,
-                                    base_method: str = 'weighted_sum') -> Dict:
+                                     base_method: str = 'weighted_sum') -> Dict:
         """
         Evaluate classification using top-k domains
         """
@@ -337,7 +337,7 @@ class Evaluator:
         return results
 
     def learn_optimal_weights(self, texts: List[str], labels: List[int],
-                             k: int = 3) -> Optional[np.ndarray]:
+                              k: int = 3) -> Optional[np.ndarray]:
         """
         Learn optimal domain weights using validation data
         """
@@ -504,3 +504,130 @@ class Evaluator:
             })
 
         return analysis
+
+    # Add this method to your existing Evaluator class
+
+    def evaluate_moe_classification(self, dataset_name: str = 'ag_news') -> Dict:
+        """
+        Evaluate MoE approach
+        """
+        logger.info(f"Evaluating MoE on {dataset_name}")
+
+        # Load data using your existing loader
+        if dataset_name == 'ag_news':
+            texts, labels = self.data_loader.load_ag_news()
+        elif dataset_name == 'dbpedia':
+            texts, labels = self.data_loader.load_dbpedia()
+        else:
+            texts, labels = self.data_loader.load_twenty_newsgroups()
+
+        results = {}
+
+        # Initialize MoE composer
+        from src.models.embedding_composer import MoEEmbeddingComposer
+        moe_composer = MoEEmbeddingComposer()
+
+        # Get MoE embeddings
+        logger.info("Getting MoE embeddings...")
+        moe_embeddings = moe_composer.compose_batch_moe(texts)
+
+        # Evaluate
+        clf = LogisticRegression(max_iter=1000, random_state=42)
+        scores = cross_val_score(clf, moe_embeddings, labels, cv=5, scoring='accuracy')
+
+        results['moe_routing'] = {
+            'mean': scores.mean(),
+            'std': scores.std(),
+            'scores': scores.tolist()
+        }
+
+        logger.info(f"MoE: {scores.mean():.4f} ± {scores.std():.4f}")
+
+        # Compare with your best method (Top-4)
+        logger.info("Comparing with Top-4 composition...")
+        top4_embeddings = []
+        for text in texts:
+            emb = self.composer.compose_topk(text, k=4, method='weighted_sum')
+            top4_embeddings.append(emb)
+        top4_embeddings = np.array(top4_embeddings)
+
+        scores_top4 = cross_val_score(clf, top4_embeddings, labels, cv=5, scoring='accuracy')
+
+        results['top4_comparison'] = {
+            'mean': scores_top4.mean(),
+            'std': scores_top4.std()
+        }
+
+        logger.info(f"Top-4: {scores_top4.mean():.4f} ± {scores_top4.std():.4f}")
+        logger.info(f"MoE Improvement: {(scores.mean() - scores_top4.mean()) * 100:.2f}%")
+
+        return results
+
+    def evaluate_moe_similarity(self) -> Dict:
+        """
+        Evaluate MoE on similarity task
+        """
+        logger.info("Evaluating MoE similarity on STS-B")
+
+        text_pairs, true_scores = self.data_loader.load_stsb()
+
+        from src.models.embedding_composer import MoEEmbeddingComposer
+        moe_composer = MoEEmbeddingComposer()
+
+        similarities = []
+        for text1, text2 in text_pairs:
+            emb1 = moe_composer.compose_moe(text1)
+            emb2 = moe_composer.compose_moe(text2)
+
+            similarity = np.dot(emb1, emb2) / (np.linalg.norm(emb1) * np.linalg.norm(emb2))
+            similarities.append(similarity)
+
+        spearman_corr, _ = spearmanr(similarities, true_scores)
+        pearson_corr, _ = pearsonr(similarities, true_scores)
+
+        results = {
+            'moe_similarity': {
+                'spearman': spearman_corr,
+                'pearson': pearson_corr
+            }
+        }
+
+        logger.info(f"MoE: Spearman={spearman_corr:.4f}, Pearson={pearson_corr:.4f}")
+
+        return results
+
+
+# Add to src/evaluation/evaluator.py (OPTIONAL)
+
+    def evaluate_with_advanced_baselines(self, dataset_name: str) -> Dict:
+        """
+        Optional: Compare against state-of-the-art models
+        """
+        logger.info(f"Evaluating advanced baselines on {dataset_name}")
+
+        # Load data
+        if dataset_name == 'ag_news':
+            texts, labels = self.data_loader.load_ag_news()
+        elif dataset_name == 'dbpedia':
+            texts, labels = self.data_loader.load_dbpedia()
+        else:
+            texts, labels = self.data_loader.load_twenty_newsgroups()
+
+        results = {}
+
+        # Only if you have AdvancedBaselines class
+        if hasattr(self, 'advanced_baselines'):
+            from src.evaluation.baselines import AdvancedBaselines
+            advanced = AdvancedBaselines()
+            e5_embeddings = advanced.get_e5_batch(texts)
+
+            clf = LogisticRegression(max_iter=1000, random_state=42)
+            scores = cross_val_score(clf, e5_embeddings, labels, cv=5, scoring='accuracy')
+
+            results['e5_sota'] = {
+                'mean': scores.mean(),
+                'std': scores.std()
+            }
+            logger.info(f"E5 (SOTA): {scores.mean():.4f} ± {scores.std():.4f}")
+
+        return results

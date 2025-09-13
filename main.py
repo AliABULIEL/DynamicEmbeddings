@@ -120,7 +120,8 @@ def main(args):
             'run_enhanced': args.enhanced,
             'use_topk': args.use_topk,
             'k_value': args.k_value,
-            'use_task_specific': args.task_specific
+            'use_task_specific': args.task_specific,
+            'run_moe': args.moe
         },
         'results': {}
     }
@@ -188,6 +189,23 @@ def main(args):
         )
         all_results['results']['similarity'] = results
 
+    # Run MoE experiments if requested
+    if args.moe:
+        logger.info("\n" + "=" * 50)
+        logger.info("MIXTURE OF EXPERTS EXPERIMENTS")
+        logger.info("=" * 50)
+
+        for dataset in args.datasets:
+            if dataset != 'stsb':
+                logger.info(f"\nMoE evaluation on {dataset}")
+                moe_results = evaluator.evaluate_moe_classification(dataset)
+                all_results['results'][f'moe_{dataset}'] = moe_results
+
+        # MoE similarity
+        logger.info("\nMoE similarity evaluation")
+        moe_sim_results = evaluator.evaluate_moe_similarity()
+        all_results['results']['moe_similarity'] = moe_sim_results
+
     # Run ablation studies
     if args.ablation:
         logger.info("\n" + "=" * 50)
@@ -213,7 +231,7 @@ def main(args):
 
     # Save results
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    results_file = RESULTS_DIR / f"results_{'enhanced_' if args.enhanced else ''}{timestamp}.json"
+    results_file = RESULTS_DIR / f"results_{'enhanced_' if args.enhanced else ''}{'moe_' if args.moe else ''}{timestamp}.json"
 
     with open(results_file, 'w') as f:
         json.dump(all_results, f, indent=2)
@@ -313,6 +331,12 @@ if __name__ == "__main__":
         '--task-specific',
         action='store_true',
         help='Use task-specific composition strategies'
+    )
+
+    parser.add_argument(
+        '--moe',
+        action='store_true',
+        help='Run MoE experiments'
     )
 
     args = parser.parse_args()

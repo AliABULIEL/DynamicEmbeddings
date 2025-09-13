@@ -1,10 +1,12 @@
 """
 Enhanced embedding composition strategies with improvements
 """
+
+import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 from typing import Dict, List, Optional, Literal, Union, Tuple
 import torch
-import torch.nn.functional as F
 from sklearn.decomposition import PCA
 from sklearn.linear_model import Ridge
 from config.settings import DOMAINS, EMBEDDING_DIM
@@ -458,3 +460,103 @@ class EmbeddingComposer:
                 final_embedding += gates[i] * embeddings[domain]
 
         return final_embedding
+
+
+class MoERouter(nn.Module):
+    """
+    Simple router for MoE that works with your existing setup
+    """
+
+    def __init__(self, input_dim=768, num_experts=5):
+        super().__init__()
+        self.router = nn.Sequential(
+            nn.Linear(input_dim, 256),
+            nn.ReLU(),
+            nn.Linear(256, num_experts)
+        )
+
+    def forward(self, x):
+        return F.softmax(self.router(x), dim=-1)
+
+
+class MoEEmbeddingComposer(EmbeddingComposer):
+    """
+    MoE version of your EmbeddingComposer - inherits everything and adds MoE logic
+    """
+
+    def __init__(self):
+        super().__init__()
+        # Initialize router for your 5 domains
+        self.router = MoERouter(EMBEDDING_DIM, len(self.domains))
+        self.router.eval()  # Keep in eval mode initially
+
+        # Feature fusion layer
+        self.fusion = nn.Sequential(
+            nn.Linear(EMBEDDING_DIM + len(self.domains), EMBEDDING_DIM),
+            nn.ReLU(),
+            nn.Linear(EMBEDDING_DIM, EMBEDDING_DIM)
+        )
+        self.fusion.eval()
+
+        logger.info("Initialized MoE composer with routing")
+
+    def compose_moe(self, text: str, return_details: bool = False):
+        """
+        MoE composition using routing weights as features
+        """
+        # Get embeddings from all domains (reuse your existing method)
+        domain_embeddings = self.embedder_manager.get_all_embeddings(text)
+
+        # Stack embeddings for routing
+        emb_list = [domain_embeddings[d] for d in self.domains]
+        emb_tensor = torch.FloatTensor(emb_list)  # [5, 768]
+
+        # Get initial embedding (use news as it performed best)
+        initial_emb = torch.FloatTensor(domain_embeddings['news']).unsqueeze(0)
+
+        # Get routing weights
+        with torch.no_grad():
+            routing_weights = self.router(initial_emb).squeeze(0)  # [5]
+
+        # Apply soft routing (all experts contribute)
+        weighted_embeddings = []
+        for i, domain in enumerate(self.domains):
+            weight = routing_weights[i].item()
+            weighted_emb = weight * domain_embeddings[domain]
+            weighted_embeddings.append(weighted_emb)
+
+        # Sum weighted embeddings
+        combined = np.sum(weighted_embeddings, axis=0)
+
+        # Use routing weights as additional features (key insight)
+        routing_features = routing_weights.numpy()
+
+        # Concatenate embeddings with routing weights
+        enhanced = np.concatenate([combined, routing_features])
+
+        # Pass through fusion layer
+        with torch.no_grad():
+            enhanced_tensor = torch.FloatTensor(enhanced).unsqueeze(0)
+            final_embedding = self.fusion(enhanced_tensor).squeeze(0).numpy()
+
+        if return_details:
+            return final_embedding, routing_features, domain_embeddings
+
+        return final_embedding
+
+    def compose_batch_moe(self, texts: List[str], batch_size: int = 32) -> np.ndarray:
+        """
+        Batch processing with MoE
+        """
+        logger.info(f"MoE composing embeddings for {len(texts)} texts")
+
+        all_embeddings = []
+
+        for text_idx, text in enumerate(texts):
+            embedding = self.compose_moe(text)
+            all_embeddings.append(embedding)
+
+            if (text_idx + 1) % 100 == 0:
+                logger.info(f"Processed {text_idx + 1}/{len(texts)} texts")
+
+        return np.array(all_embeddings)

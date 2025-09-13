@@ -72,7 +72,7 @@ class MultiEmbeddingBaseline:
     def __init__(self):
         # Use models with same 768 dimensions for consistency
         self.models = {
-            'mpnet': SentenceTransformer('all-mpnet-base-v2'),           # 768 dim
+            'mpnet': SentenceTransformer('all-mpnet-base-v2'),  # 768 dim
             'distilbert': SentenceTransformer('distilbert-base-nli-mean-tokens'),  # 768 dim
             'roberta': SentenceTransformer('roberta-base-nli-mean-tokens')  # 768 dim
         }
@@ -167,4 +167,29 @@ class AdvancedBaseline:
         embeddings.append(self.models['bge_large'].encode(text, convert_to_numpy=True))
 
         # Average ensemble
+
         return np.mean(embeddings, axis=0)
+
+
+# Add this class to your existing baselines.py
+
+class AdvancedBaselines:
+    """
+    State-of-the-art baseline models for stronger comparison
+    """
+
+    def __init__(self):
+        # Load E5 model (current SOTA)
+        self.e5_model = SentenceTransformer('intfloat/e5-base-v2')
+        logger.info("Loaded E5 baseline model")
+
+    def get_e5_embedding(self, text: str) -> np.ndarray:
+        """Get E5 embedding with proper formatting"""
+        # E5 requires query: prefix for short texts
+        formatted_text = f"query: {text}" if len(text) < 100 else f"passage: {text}"
+        return self.e5_model.encode(formatted_text, convert_to_numpy=True)
+
+    def get_e5_batch(self, texts: List[str]) -> np.ndarray:
+        """Get E5 embeddings for batch"""
+        formatted_texts = [f"query: {t}" if len(t) < 100 else f"passage: {t}" for t in texts]
+        return self.e5_model.encode(formatted_texts, convert_to_numpy=True)
