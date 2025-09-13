@@ -32,15 +32,6 @@ class DatasetLoader:
     def load_ag_news(self) -> Tuple[List[str], List[int]]:
         """
         Load AG News dataset for classification
-
-        AG News has 4 classes:
-        - 0: World
-        - 1: Sports
-        - 2: Business
-        - 3: Science/Technology
-
-        Returns:
-            Tuple of (texts, labels)
         """
         logger.info("Loading AG News dataset...")
 
@@ -53,6 +44,10 @@ class DatasetLoader:
             texts = dataset['text']
             labels = dataset['label']
 
+            # IMPORTANT: Convert to Python list to avoid type issues
+            texts = list(texts)
+            labels = [int(label) for label in labels]  # Convert to Python int
+
             logger.info(f"Loaded {len(texts)} samples from AG News")
             logger.info(f"Label distribution: {np.bincount(labels)}")
 
@@ -63,36 +58,65 @@ class DatasetLoader:
             raise
 
     def load_dbpedia(self) -> Tuple[List[str], List[int]]:
-        """
-        Load DBPedia dataset for classification
-
-        DBPedia has 14 classes:
-        - Company, Educational Institution, Artist, Athlete,
-        - Office Holder, Mean of Transportation, Building,
-        - Natural Place, Village, Animal, Plant, Album, Film,
-        - Written Work
-
-        Returns:
-            Tuple of (texts, labels)
-        """
+        """Load DBPedia dataset with balanced sampling"""
         logger.info("Loading DBPedia dataset...")
 
         try:
+            # Load full test set first
+            dataset = load_dataset('dbpedia_14', split='test')
+
             if self.sample_size:
-                dataset = load_dataset('dbpedia_14', split=f'test[:{self.sample_size}]')
+                # Ensure balanced sampling across classes
+                import random
+                random.seed(42)
+
+                # Get indices for each class
+                class_indices = {}
+                for idx, item in enumerate(dataset):
+                    label = item['label']
+                    if label not in class_indices:
+                        class_indices[label] = []
+                    class_indices[label].append(idx)
+
+                # Sample equally from each class
+                samples_per_class = self.sample_size // 14  # 14 classes
+                selected_indices = []
+
+                for label in range(14):
+                    if label in class_indices:
+                        indices = class_indices[label]
+                        # Sample up to samples_per_class from this class
+                        n_samples = min(samples_per_class, len(indices))
+                        selected = random.sample(indices, n_samples)
+                        selected_indices.extend(selected)
+
+                # Shuffle the selected indices
+                random.shuffle(selected_indices)
+
+                # Get the samples
+                texts = []
+                labels = []
+                for idx in selected_indices[:self.sample_size]:
+                    item = dataset[idx]
+                    combined_text = f"{item['title']}. {item['content']}"
+                    texts.append(combined_text)
+                    labels.append(int(item['label']))
             else:
-                dataset = load_dataset('dbpedia_14', split='test')
-
-            # Combine title and content for better context
-            texts = []
-            for item in dataset:
-                # DBPedia has 'title' and 'content' fields
-                combined_text = f"{item['title']}. {item['content']}"
-                texts.append(combined_text)
-
-            labels = dataset['label']
+                # Use all data
+                texts = []
+                labels = []
+                for item in dataset:
+                    combined_text = f"{item['title']}. {item['content']}"
+                    texts.append(combined_text)
+                    labels.append(int(item['label']))
 
             logger.info(f"Loaded {len(texts)} samples from DBPedia")
+            logger.info(f"Label distribution: {np.bincount(labels)}")
+
+            # Verify we have multiple classes
+            unique_classes = len(np.unique(labels))
+            if unique_classes < 2:
+                logger.error(f"Only {unique_classes} class(es) found in DBPedia sample!")
 
             return texts, labels
 
