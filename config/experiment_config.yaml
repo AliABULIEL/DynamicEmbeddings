@@ -1,0 +1,74 @@
+experiment:
+  name: "dynamic_embeddings_benchmark"
+  output_dir: "experiments/results"
+  train: true
+  evaluate: true
+  ablation: true
+
+data:
+  vocab_size: 10000
+  train_size: 10000
+  val_size: 2000
+  test_size: 2000
+  max_seq_length: 128
+
+models:
+  matryoshka:
+    enabled: true
+    params:
+      input_dim: 10000
+      embedding_dim: 768
+      nested_dims: [64, 128, 256, 512, 768]
+      base_model: "transformer"
+      num_layers: 6
+      num_heads: 8
+      dropout: 0.1
+
+  temporal:
+    enabled: true
+    params:
+      input_dim: 10000
+      embedding_dim: 768
+      num_ssm_layers: 4
+      state_dim: 64
+      time_encoding_dim: 32
+      dropout: 0.1
+
+  contextual:
+    enabled: true
+    params:
+      input_dim: 10000
+      embedding_dim: 768
+      context_window: 64
+      num_context_layers: 6
+      num_heads: 8
+      use_position_agnostic: true
+      dropout: 0.1
+
+use_lora: true
+lora:
+  task_configs:
+    retrieval:
+      rank: 16
+      alpha: 32
+    classification:
+      rank: 8
+      alpha: 16
+
+training:
+  batch_size: 32
+  learning_rate: 0.0001
+  num_epochs: 10
+  warmup_steps: 1000
+  max_steps: 50000
+  val_frequency: 1000
+  checkpoint_frequency: 5000
+  gradient_clip: 1.0
+
+evaluation:
+  metrics:
+    - "accuracy"
+    - "f1"
+    - "mrr"
+    - "ndcg"
+  batch_size: 64

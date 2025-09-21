@@ -1,44 +1,54 @@
-dynamic-embeddings-v2/
-├── config/
-│   ├── __init__.py
-│   └── model_config.py            # Model and training configurations
-│
-├── src/
-│   ├── __init__.py
-│   │
-│   ├── models/
-│   │   ├── __init__.py
-│   │   ├── experts.py             # Expert encoder implementations
-│   │   ├── router.py              # MoE router with learned routing
-│   │   ├── fusion.py              # AdapterFusion layers
-│   │   └── dynamic_model.py       # Main dynamic embedding model
-│   │
-│   ├── training/
-│   │   ├── __init__.py
-│   │   ├── trainer.py             # Training logic with curriculum learning
-│   │   ├── dataset.py             # Contrastive learning datasets
-│   │   └── losses.py              # Custom loss functions
-│   │
-│   ├── evaluation/
-│   │   ├── __init__.py
-│   │   ├── mteb_evaluator.py      # MTEB benchmark evaluation
-│   │   ├── domain_shift.py        # Domain shift evaluation
-│   │   └── metrics.py             # Evaluation metrics
-│   │
-│   └── utils/
-│       ├── __init__.py
-│       ├── data_loader.py         # Data loading utilities
-│       └── visualization.py       # Routing analysis visualization
-│
-├── scripts/
-│   ├── train.py                   # Main training script
-│   ├── evaluate.py                # Evaluation script
-│   └── download_models.py         # Download required models
-│
-├── experiments/
-│   ├── run_mteb.py               # Run MTEB benchmarks
-│   └── ablation_study.py         # Ablation studies
-│
+dynamic_embeddings/
 ├── requirements.txt
 ├── setup.py
-└── README.md
+├── README.md
+├── config/
+│   └── config.yaml
+├── src/
+│   ├── __init__.py
+│   ├── models/
+│   │   ├── __init__.py
+│   │   ├── base_embedding.py
+│   │   ├── matryoshka_embedding.py
+│   │   ├── temporal_embedding.py
+│   │   ├── contextual_embedding.py
+│   │   └── adaptive_embedding.py
+│   ├── adapters/
+│   │   ├── __init__.py
+│   │   ├── lora_adapter.py
+│   │   └── task_adapter.py
+│   ├── training/
+│   │   ├── __init__.py
+│   │   ├── trainer.py
+│   │   ├── loss_functions.py
+│   │   └── optimizers.py
+│   ├── evaluation/
+│   │   ├── __init__.py
+│   │   ├── evaluator.py
+│   │   ├── metrics.py
+│   │   └── benchmarks.py
+│   ├── data/
+│   │   ├── __init__.py
+│   │   ├── data_loader.py
+│   │   ├── preprocessor.py
+│   │   └── augmentation.py
+│   ├── utils/
+│   │   ├── __init__.py
+│   │   ├── logger.py
+│   │   ├── config_manager.py
+│   │   └── device_manager.py
+│   └── visualization/
+│       ├── __init__.py
+│       ├── plotter.py
+│       └── dashboard.py
+├── tests/
+│   ├── __init__.py
+│   ├── test_models.py
+│   ├── test_training.py
+│   └── test_evaluation.py
+├── experiments/
+│   ├── run_experiment.py
+│   ├── benchmark_comparison.py
+│   └── ablation_study.py
+└── notebooks/
+    └── demo.ipyn

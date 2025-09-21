@@ -1,444 +1,297 @@
-"""
-Training module for Dynamic Embedding Model
-Implements curriculum learning and contrastive objectives
-"""
+"""Training manager for dynamic embeddings."""
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils.data import DataLoader
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
-import numpy as np
-from typing import Dict, List, Optional, Tuple
-from pathlib import Path
-from tqdm import tqdm
+from torch.utils.data import DataLoader
+from typing import Dict, Optional, Callable, List, Tuple
 import logging
+from tqdm import tqdm
 import wandb
-from collections import defaultdict
+from pathlib import Path
+
 
 logger = logging.getLogger(__name__)
 
 
 class DynamicEmbeddingTrainer:
-    """
-    Trainer for Dynamic Embedding Model
-    Implements:
-    - Curriculum learning (progressive training stages)
-    - Contrastive learning objectives
-    - Load balancing and diversity losses
-    - Mixed precision training
+    """Trainer for dynamic embedding models.
+
+    Handles training loop, validation, checkpointing, and logging
+    for all dynamic embedding model variants.
     """
 
-    def __init__(self, model, config, use_wandb: bool = False):
-        """
-        Initialize trainer
+    def __init__(
+        self,
+        model: nn.Module,
+        train_dataloader: DataLoader,
+        val_dataloader: Optional[DataLoader] = None,
+        learning_rate: float = 1e-4,
+        warmup_steps: int = 1000,
+        max_steps: int = 100000,
+        gradient_clip: float = 1.0,
+        device: str = 'cuda',
+        checkpoint_dir: str = 'checkpoints',
+        log_wandb: bool = True,
+        project_name: str = 'dynamic-embeddings'
+    ):
+        """Initialize trainer.
 
         Args:
-            model: DynamicEmbeddingModel instance
-            config: Training configuration
-            use_wandb: Whether to use Weights & Biases for logging
+            model: Model to train
+            train_dataloader: Training data loader
+            val_dataloader: Validation data loader
+            learning_rate: Learning rate
+            warmup_steps: Number of warmup steps
+            max_steps: Maximum training steps
+            gradient_clip: Gradient clipping value
+            device: Device to train on
+            checkpoint_dir: Directory for checkpoints
+            log_wandb: Whether to log to Weights & Biases
+            project_name: W&B project name
         """
-        self.model = model
-        self.config = config
-        self.device = torch.device(config.training.device)
+        self.model = model.to(device)
+        self.train_dataloader = train_dataloader
+        self.val_dataloader = val_dataloader
+        self.device = device
+        self.gradient_clip = gradient_clip
 
-        # Move model to device
-        self.model.to(self.device)
-
-        # Initialize optimizers for different components
-        self._setup_optimizers()
-
-        # Loss functions
-        self.contrastive_loss = ContrastiveLoss(
-            temperature=config.training.temperature
+        # Create optimizer
+        self.optimizer = AdamW(
+            model.parameters(),
+            lr=learning_rate,
+            betas=(0.9, 0.999),
+            weight_decay=0.01
         )
 
-        # Mixed precision training
-        self.use_amp = config.training.mixed_precision and self.device.type == 'cuda'
-        if self.use_amp:
-            self.scaler = torch.cuda.amp.GradScaler()
-            logger.info("Mixed precision training enabled")
+        # Learning rate scheduler with warmup
+        self.scheduler = self._create_scheduler(warmup_steps, max_steps)
 
-        # Logging
-        self.use_wandb = use_wandb
-        if use_wandb:
-            wandb.init(
-                project="dynamic-embeddings",
-                config=config.__dict__,
-                name=config.experiment_name
-            )
+        # Setup checkpointing
+        self.checkpoint_dir = Path(checkpoint_dir)
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
-        # Training statistics
-        self.training_stats = defaultdict(list)
-        self.best_val_loss = float('inf')
-        self.patience_counter = 0
-
-    def _setup_optimizers(self):
-        """Setup optimizers for different training stages"""
-        config = self.config.training
-
-        # Router optimizer
-        self.router_optimizer = AdamW(
-            self.model.router.parameters(),
-            lr=config.router_lr,
-            weight_decay=config.weight_decay
-        )
-
-        # Fusion optimizer
-        fusion_params = list(self.model.fusion.parameters()) + \
-                        list(self.model.output_projection.parameters())
-        self.fusion_optimizer = AdamW(
-            fusion_params,
-            lr=config.fusion_lr,
-            weight_decay=config.weight_decay
-        )
-
-        # Full model optimizer (for fine-tuning)
-        self.full_optimizer = AdamW(
-            self.model.parameters(),
-            lr=config.overall_lr,
-            weight_decay=config.weight_decay
-        )
-
-        # Learning rate schedulers
-        self.router_scheduler = CosineAnnealingWarmRestarts(
-            self.router_optimizer, T_0=10, T_mult=2
-        )
-        self.fusion_scheduler = CosineAnnealingWarmRestarts(
-            self.fusion_optimizer, T_0=10, T_mult=2
-        )
-        self.full_scheduler = CosineAnnealingWarmRestarts(
-            self.full_optimizer, T_0=10, T_mult=2
-        )
-
-    def train(self,
-              train_loader: DataLoader,
-              val_loader: Optional[DataLoader] = None,
-              epochs: Optional[int] = None):
-        """
-        Main training loop with curriculum learning
-
-        Args:
-            train_loader: Training data loader
-            val_loader: Validation data loader
-            epochs: Total epochs (overrides config if provided)
-        """
-        logger.info("=" * 60)
-        logger.info("Starting Dynamic Embedding Training")
-        logger.info("=" * 60)
-
-        # Stage 1: Train router only
-        logger.info("\nStage 1: Training Router")
-        logger.info("-" * 40)
-        self._train_stage(
-            train_loader, val_loader,
-            stage='router',
-            epochs=self.config.training.router_epochs
-        )
-
-        # Stage 2: Train fusion only
-        logger.info("\nStage 2: Training Fusion Layers")
-        logger.info("-" * 40)
-        self._train_stage(
-            train_loader, val_loader,
-            stage='fusion',
-            epochs=self.config.training.fusion_epochs
-        )
-
-        # Stage 3: Fine-tune everything
-        logger.info("\nStage 3: Fine-tuning All Components")
-        logger.info("-" * 40)
-        self._train_stage(
-            train_loader, val_loader,
-            stage='full',
-            epochs=epochs or self.config.training.finetune_epochs
-        )
-
-        logger.info("\n" + "=" * 60)
-        logger.info("Training Complete!")
-        logger.info("=" * 60)
-
-    def _train_stage(self,
-                     train_loader: DataLoader,
-                     val_loader: Optional[DataLoader],
-                     stage: str,
-                     epochs: int):
-        """
-        Train a specific stage
-
-        Args:
-            train_loader: Training data loader
-            val_loader: Validation data loader
-            stage: 'router', 'fusion', or 'full'
-            epochs: Number of epochs for this stage
-        """
-        # Select optimizer and scheduler
-        if stage == 'router':
-            optimizer = self.router_optimizer
-            scheduler = self.router_scheduler
-            # Freeze other components
-            self.model.freeze_experts()
-            for param in self.model.fusion.parameters():
-                param.requires_grad = False
-        elif stage == 'fusion':
-            optimizer = self.fusion_optimizer
-            scheduler = self.fusion_scheduler
-            # Freeze router and experts
-            self.model.freeze_experts()
-            for param in self.model.router.parameters():
-                param.requires_grad = False
-        else:  # full
-            optimizer = self.full_optimizer
-            scheduler = self.full_scheduler
-            # Unfreeze everything
-            self.model.unfreeze_experts()
-            for param in self.model.parameters():
-                param.requires_grad = True
-
-        for epoch in range(epochs):
-            # Training epoch
-            train_loss, train_metrics = self._train_epoch(
-                train_loader, optimizer, stage
-            )
-
-            # Validation
-            if val_loader:
-                val_loss, val_metrics = self._validate(val_loader)
-            else:
-                val_loss, val_metrics = None, {}
-
-            # Update scheduler
-            scheduler.step()
-
-            # Logging
-            log_str = f"Epoch {epoch + 1}/{epochs} | Train Loss: {train_loss:.4f}"
-            if val_loss:
-                log_str += f" | Val Loss: {val_loss:.4f}"
-            logger.info(log_str)
-
-            if self.use_wandb:
-                wandb.log({
-                    f"{stage}/train_loss": train_loss,
-                    f"{stage}/val_loss": val_loss,
-                    f"{stage}/lr": optimizer.param_groups[0]['lr'],
-                    **{f"{stage}/{k}": v for k, v in train_metrics.items()},
-                    **{f"{stage}/val_{k}": v for k, v in val_metrics.items()}
-                })
-
-            # Early stopping
-            if val_loss and stage == 'full':
-                if val_loss < self.best_val_loss:
-                    self.best_val_loss = val_loss
-                    self.patience_counter = 0
-                    # Save best model
-                    self.save_checkpoint(f"best_model_{stage}.pt")
-                else:
-                    self.patience_counter += 1
-                    if self.patience_counter >= self.config.training.patience:
-                        logger.info("Early stopping triggered")
-                        break
-
-        # Restore best model for this stage
-        if val_loader and stage == 'full':
-            self.load_checkpoint(f"best_model_{stage}.pt")
-
-    def _train_epoch(self,
-                     train_loader: DataLoader,
-                     optimizer: torch.optim.Optimizer,
-                     stage: str) -> Tuple[float, Dict]:
-        """
-        Train one epoch
-
-        Returns:
-            epoch_loss: Average loss for the epoch
-            metrics: Dictionary of metrics
-        """
-        self.model.train()
-        total_loss = 0
-        metrics = defaultdict(float)
-
-        progress_bar = tqdm(train_loader, desc=f"Training {stage}")
-
-        for batch_idx, batch in enumerate(progress_bar):
-            texts, labels = batch
-
-            # Mixed precision context
-            with torch.cuda.amp.autocast(enabled=self.use_amp):
-                # Forward pass
-                outputs = self.model(texts, return_details=True)
-                embeddings = outputs['embedding']
-                routing_weights = outputs['routing_weights']
-                auxiliary = outputs.get('auxiliary', {})
-
-                # Contrastive loss
-                loss = self.contrastive_loss(embeddings, labels)
-
-                # Add auxiliary losses
-                if auxiliary and 'load_balance_loss' in auxiliary:
-                    loss += auxiliary['load_balance_loss']
-                    metrics['load_balance_loss'] += auxiliary['load_balance_loss'].item()
-
-                if auxiliary and 'diversity_loss' in auxiliary:
-                    loss += self.config.training.diversity_weight * auxiliary['diversity_loss']
-                    metrics['diversity_loss'] += auxiliary['diversity_loss'].item()
-
-            # Backward pass
-            optimizer.zero_grad()
-
-            if self.use_amp:
-                self.scaler.scale(loss).backward()
-                self.scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(
-                    self.model.parameters(),
-                    self.config.training.max_grad_norm
-                )
-                self.scaler.step(optimizer)
-                self.scaler.update()
-            else:
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(
-                    self.model.parameters(),
-                    self.config.training.max_grad_norm
-                )
-                optimizer.step()
-
-            # Update metrics
-            total_loss += loss.item()
-            metrics['routing_entropy'] += (-routing_weights * torch.log(routing_weights + 1e-10)).sum(
-                dim=-1).mean().item()
-            metrics['routing_sparsity'] += (routing_weights > 0.01).float().mean().item()
-
-            # Update progress bar
-            progress_bar.set_postfix({
-                'loss': loss.item(),
-                'entropy': metrics['routing_entropy'] / (batch_idx + 1)
+        # Setup logging
+        self.log_wandb = log_wandb
+        if log_wandb:
+            wandb.init(project=project_name, config={
+                'learning_rate': learning_rate,
+                'warmup_steps': warmup_steps,
+                'max_steps': max_steps,
+                'model_config': model.config if hasattr(model, 'config') else {}
             })
 
-        # Average metrics
-        num_batches = len(train_loader)
-        epoch_loss = total_loss / num_batches
-        for key in metrics:
-            metrics[key] /= num_batches
+        # Training state
+        self.global_step = 0
+        self.best_val_loss = float('inf')
 
-        return epoch_loss, dict(metrics)
+        logger.info(f"Trainer initialized with {sum(p.numel() for p in model.parameters())} parameters")
 
-    def _validate(self, val_loader: DataLoader) -> Tuple[float, Dict]:
-        """
-        Validate model
+    def _create_scheduler(self, warmup_steps: int, max_steps: int):
+        """Create learning rate scheduler with linear warmup."""
+        def lr_lambda(step):
+            if step < warmup_steps:
+                return float(step) / float(max(1, warmup_steps))
+            return max(0.0,
+                      float(max_steps - step) / float(max(1, max_steps - warmup_steps)))
+
+        return torch.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda)
+
+    def train_step(
+        self,
+        batch: Dict[str, torch.Tensor],
+        loss_fn: Callable
+    ) -> Dict[str, float]:
+        """Single training step.
+
+        Args:
+            batch: Batch of training data
+            loss_fn: Loss function
 
         Returns:
-            val_loss: Average validation loss
-            metrics: Dictionary of metrics
+            Dictionary of metrics
         """
-        self.model.eval()
-        total_loss = 0
-        metrics = defaultdict(float)
+        self.model.train()
 
-        with torch.no_grad():
-            for batch in tqdm(val_loader, desc="Validation"):
-                texts, labels = batch
+        # Move batch to device
+        batch = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v
+                for k, v in batch.items()}
 
-                # Forward pass
-                outputs = self.model(texts, return_details=True)
-                embeddings = outputs['embedding']
-                routing_weights = outputs['routing_weights']
+        # Forward pass
+        outputs = self.model(**batch)
 
-                # Contrastive loss
-                loss = self.contrastive_loss(embeddings, labels)
+        # Compute loss
+        loss = loss_fn(outputs, batch)
 
-                # Update metrics
-                total_loss += loss.item()
-                metrics['routing_entropy'] += (-routing_weights * torch.log(routing_weights + 1e-10)).sum(
-                    dim=-1).mean().item()
-                metrics['routing_sparsity'] += (routing_weights > 0.01).float().mean().item()
+        # Backward pass
+        loss.backward()
 
-        # Average metrics
-        num_batches = len(val_loader)
-        val_loss = total_loss / num_batches
-        for key in metrics:
-            metrics[key] /= num_batches
+        # Gradient clipping
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clip)
 
-        return val_loss, dict(metrics)
+        # Optimizer step
+        self.optimizer.step()
+        self.scheduler.step()
+        self.optimizer.zero_grad()
 
-    def save_checkpoint(self, filename: str):
-        """Save training checkpoint"""
-        checkpoint = {
-            'model_state_dict': self.model.state_dict(),
-            'router_optimizer': self.router_optimizer.state_dict(),
-            'fusion_optimizer': self.fusion_optimizer.state_dict(),
-            'full_optimizer': self.full_optimizer.state_dict(),
-            'router_scheduler': self.router_scheduler.state_dict(),
-            'fusion_scheduler': self.fusion_scheduler.state_dict(),
-            'full_scheduler': self.full_scheduler.state_dict(),
-            'training_stats': dict(self.training_stats),
-            'best_val_loss': self.best_val_loss,
-            'config': self.config
+        # Update global step
+        self.global_step += 1
+
+        # Collect metrics
+        metrics = {
+            'loss': loss.item(),
+            'learning_rate': self.scheduler.get_last_lr()[0],
+            'gradient_norm': self._compute_gradient_norm()
         }
 
-        path = Path(self.config.data.output_dir) / filename
-        path.parent.mkdir(parents=True, exist_ok=True)
+        return metrics
+
+    def validate(
+        self,
+        loss_fn: Callable
+    ) -> Dict[str, float]:
+        """Run validation.
+
+        Args:
+            loss_fn: Loss function
+
+        Returns:
+            Validation metrics
+        """
+        if self.val_dataloader is None:
+            return {}
+
+        self.model.eval()
+        total_loss = 0
+        num_batches = 0
+
+        with torch.no_grad():
+            for batch in tqdm(self.val_dataloader, desc="Validation"):
+                batch = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v
+                        for k, v in batch.items()}
+
+                outputs = self.model(**batch)
+                loss = loss_fn(outputs, batch)
+
+                total_loss += loss.item()
+                num_batches += 1
+
+        avg_loss = total_loss / num_batches
+
+        # Save best model
+        if avg_loss < self.best_val_loss:
+            self.best_val_loss = avg_loss
+            self.save_checkpoint('best_model.pt')
+
+        return {'val_loss': avg_loss}
+
+    def train(
+        self,
+        num_epochs: int,
+        loss_fn: Callable,
+        val_frequency: int = 1000,
+        checkpoint_frequency: int = 5000,
+        log_frequency: int = 100
+    ):
+        """Main training loop.
+
+        Args:
+            num_epochs: Number of training epochs
+            loss_fn: Loss function
+            val_frequency: Validation frequency in steps
+            checkpoint_frequency: Checkpoint frequency in steps
+            log_frequency: Logging frequency in steps
+        """
+        logger.info(f"Starting training for {num_epochs} epochs")
+
+        for epoch in range(num_epochs):
+            epoch_metrics = []
+
+            with tqdm(self.train_dataloader, desc=f"Epoch {epoch+1}/{num_epochs}") as pbar:
+                for batch in pbar:
+                    # Training step
+                    metrics = self.train_step(batch, loss_fn)
+                    epoch_metrics.append(metrics)
+
+                    # Update progress bar
+                    pbar.set_postfix({
+                        'loss': metrics['loss'],
+                        'lr': metrics['learning_rate']
+                    })
+
+                    # Logging
+                    if self.global_step % log_frequency == 0:
+                        avg_metrics = self._average_metrics(epoch_metrics[-log_frequency:])
+                        if self.log_wandb:
+                            wandb.log(avg_metrics, step=self.global_step)
+                        logger.info(f"Step {self.global_step}: {avg_metrics}")
+
+                    # Validation
+                    if self.global_step % val_frequency == 0:
+                        val_metrics = self.validate(loss_fn)
+                        if self.log_wandb:
+                            wandb.log(val_metrics, step=self.global_step)
+                        logger.info(f"Validation: {val_metrics}")
+
+                    # Checkpointing
+                    if self.global_step % checkpoint_frequency == 0:
+                        self.save_checkpoint(f'checkpoint_{self.global_step}.pt')
+
+            # End of epoch validation
+            val_metrics = self.validate(loss_fn)
+            logger.info(f"Epoch {epoch+1} validation: {val_metrics}")
+
+        # Save final model
+        self.save_checkpoint('final_model.pt')
+        logger.info("Training completed")
+
+    def save_checkpoint(self, filename: str):
+        """Save model checkpoint.
+
+        Args:
+            filename: Checkpoint filename
+        """
+        checkpoint = {
+            'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'scheduler_state_dict': self.scheduler.state_dict(),
+            'global_step': self.global_step,
+            'best_val_loss': self.best_val_loss
+        }
+
+        path = self.checkpoint_dir / filename
         torch.save(checkpoint, path)
         logger.info(f"Checkpoint saved to {path}")
 
     def load_checkpoint(self, filename: str):
-        """Load training checkpoint"""
-        path = Path(self.config.data.output_dir) / filename
-        checkpoint = torch.load(path, map_location=self.device)
+        """Load model checkpoint.
+
+        Args:
+            filename: Checkpoint filename
+        """
+        path = self.checkpoint_dir / filename
+        checkpoint = torch.load(path)
 
         self.model.load_state_dict(checkpoint['model_state_dict'])
-        self.router_optimizer.load_state_dict(checkpoint['router_optimizer'])
-        self.fusion_optimizer.load_state_dict(checkpoint['fusion_optimizer'])
-        self.full_optimizer.load_state_dict(checkpoint['full_optimizer'])
-        self.router_scheduler.load_state_dict(checkpoint['router_scheduler'])
-        self.fusion_scheduler.load_state_dict(checkpoint['fusion_scheduler'])
-        self.full_scheduler.load_state_dict(checkpoint['full_scheduler'])
-        self.training_stats = defaultdict(list, checkpoint.get('training_stats', {}))
-        self.best_val_loss = checkpoint.get('best_val_loss', float('inf'))
+        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        self.global_step = checkpoint['global_step']
+        self.best_val_loss = checkpoint['best_val_loss']
 
         logger.info(f"Checkpoint loaded from {path}")
 
+    def _compute_gradient_norm(self) -> float:
+        """Compute gradient norm."""
+        total_norm = 0
+        for p in self.model.parameters():
+            if p.grad is not None:
+                param_norm = p.grad.data.norm(2)
+                total_norm += param_norm.item() ** 2
+        return total_norm ** 0.5
 
-class ContrastiveLoss(nn.Module):
-    """
-    Contrastive loss for embedding learning
-    Based on SimCLR/MoCo approaches
-    """
-
-    def __init__(self, temperature: float = 0.07):
-        super().__init__()
-        self.temperature = temperature
-        self.cross_entropy = nn.CrossEntropyLoss()
-
-    def forward(self, embeddings: torch.Tensor, labels: Optional[torch.Tensor] = None) -> torch.Tensor:
-        """
-        Compute contrastive loss
-
-        Args:
-            embeddings: Tensor of shape [batch_size, hidden_dim]
-            labels: Optional labels for supervised contrastive learning
-
-        Returns:
-            loss: Contrastive loss value
-        """
-        batch_size = embeddings.shape[0]
-
-        # Normalize embeddings
-        embeddings = F.normalize(embeddings, p=2, dim=1)
-
-        # Compute similarity matrix
-        similarity_matrix = torch.matmul(embeddings, embeddings.t())
-        similarity_matrix = similarity_matrix / self.temperature
-
-        # Create labels (each sample is its own class for now)
-        if labels is None:
-            labels = torch.arange(batch_size, device=embeddings.device)
-
-        # Mask out self-similarity
-        mask = torch.eye(batch_size, dtype=torch.bool, device=embeddings.device)
-        similarity_matrix.masked_fill_(mask, -9999)
-
-        # Compute loss
-        loss = self.cross_entropy(similarity_matrix, labels)
-
-        return loss
+    def _average_metrics(self, metrics_list: List[Dict]) -> Dict:
+        """Average metrics over multiple steps."""
+        avg_metrics = {}
+        for key in metrics_list[0].keys():
+            avg_metrics[key] = sum(m[key] for m in metrics_list) / len(metrics_list)
+        return avg_metrics

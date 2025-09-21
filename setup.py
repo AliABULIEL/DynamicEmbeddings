@@ -1,30 +1,21 @@
-"""
-Setup script for the project
-"""
+"""Setup configuration for Dynamic Embeddings package."""
+
 from setuptools import setup, find_packages
 
 setup(
-    name="domain-embedding-composition",
+    name="dynamic-embeddings",
     version="1.0.0",
+    description="State-of-the-art dynamic embeddings implementation",
     author="Your Name",
-    description="Dynamic Domain-Based Embedding Composition for NLP Tasks",
-    packages=find_packages(),
+    packages=find_packages(where="src"),
+    package_dir={"": "src"},
     python_requires=">=3.8",
     install_requires=[
-        "torch>=2.0.0",
-        "transformers>=4.35.0",
-        "sentence-transformers>=2.2.2",
-        "numpy>=1.24.0",
-        "pandas>=2.0.0",
-        "scikit-learn>=1.3.0",
-        "datasets>=2.14.0",
-        "matplotlib>=3.7.0",
-        "seaborn>=0.12.0",
-        "tqdm>=4.66.0",
+        line.strip()
+        for line in open("requirements.txt").readlines()
+        if not line.startswith("#")
     ],
-    classifiers=[
-        "Programming Language :: Python :: 3",
-        "License :: OSI Approved :: MIT License",
-        "Operating System :: OS Independent",
-    ],
+    extras_require={
+        "dev": ["pytest", "black", "flake8", "mypy"],
+    },
 )
