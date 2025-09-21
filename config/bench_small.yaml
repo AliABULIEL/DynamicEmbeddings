@@ -1,0 +1,97 @@
+# DEMRL++ Small Benchmark Configuration
+# Quick testing configuration for CPU/smoke tests
+
+experiment:
+  name: "demrl_plus_small"
+  seed: 42
+  output_dir: "outputs"
+  save_every: 50
+  eval_every: 10
+  log_every: 5
+  use_wandb: false
+
+data:
+  sts_b:
+    enabled: true
+    batch_size: 8
+    eval_batch_size: 16
+    num_workers: 0  # CPU friendly
+  retrieval:
+    enabled: true
+    corpus_size: 1000  # Reduced for quick testing
+    query_size: 100   # Reduced for quick testing
+    batch_size: 8
+    eval_batch_size: 32
+    index_type: "exact"  # CPU-friendly exact search
+    
+model:
+  encoder:
+    name: "sentence-transformers/all-MiniLM-L6-v2"  # Smaller model
+    max_length: 64  # Shorter sequences
+    pooling: "mean"
+  mrl:
+    dimensions: [128, 256]  # Fewer dimensions for testing
+    base_dim: 384  # MiniLM output dim
+    use_projection: true
+    use_layer_norm: true
+  consistency:
+    enabled: true
+    weight: 0.5
+    temperature: 0.1
+    stop_grad_base: true
+    
+curriculum:
+  enabled: true
+  warmup_epochs: 1
+  schedule: "linear"  # Simpler schedule
+  initial_bias: 0.5
+  final_bias: 0.0
+  
+adapter:
+  enabled: false  # Disable for smoke test
+  method: "lora"
+  rank: 4
+  alpha: 8
+  dropout: 0.0
+  cache:
+    enabled: false
+    capacity: 2
+    eviction: "lru"
+    few_shot_steps: 5
+    few_shot_lr: 1e-3
+    
+training:
+  epochs: 2  # Quick test
+  learning_rate: 1e-3
+  warmup_ratio: 0.1
+  weight_decay: 0.0
+  gradient_accumulation_steps: 1
+  fp16: false  # CPU compatible
+  gradient_checkpointing: false
+  max_grad_norm: 1.0
+  optimizer: "adam"
+  scheduler: "linear"
+  early_stop:
+    enabled: false  # Disable for quick test
+    patience: 2
+    metric: "sts_b_spearman"
+    mode: "max"
+    
+evaluation:
+  dimensions_to_test: [128, 256]
+  metrics:
+    - "spearman"
+    - "ndcg@10"
+    - "latency"
+  baselines:
+    - "sentence-transformers/all-MiniLM-L6-v2"
+    
+hardware:
+  device: "cpu"  # Force CPU for smoke test
+  n_gpu: 0
+  mixed_precision: "no"
+  
+logging:
+  level: "DEBUG"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "outputs/smoke_test.log"

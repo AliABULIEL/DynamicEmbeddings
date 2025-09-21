@@ -1,172 +1,165 @@
 # DEMRL++ Implementation Plan
 
-## Project Overview
-**DEMRL++: Dynamic Embeddings with Matryoshka Representation Learning and Adaptive LoRA**
+## Overview
+**DEMRL++**: Dynamic Embeddings with Curriculum Matryoshka Representation Learning and Adaptive LoRA
 
-A research implementation demonstrating efficient, continually-adaptable text embeddings through:
-- Curriculum Matryoshka Representation Learning (C-MRL) 
-- Adaptive LoRA with LRU cache (AdapterCache)
-- Multi-resolution embeddings at {128, 256, 512, 768} dimensions
+A research framework addressing the quality-efficiency-adaptability trade-off in text embeddings through:
+1. **Curriculum-MRL (C-MRL)**: Multi-resolution embeddings with dimension-aware curriculum
+2. **AdapterCache**: LRU-based LoRA adapter management for online domain adaptation
 
 ## Method
 
-### 1. Curriculum-MRL (C-MRL)
-- **Per-batch dimension sampling**: Sample target dimension d ~ p_t(d) with annealed schedule
-  - Early training: Bias toward smaller dimensions (128, 256)
-  - Mid training: Uniform sampling across all dimensions
-  - Late training: Focus on larger dimensions for refinement
-- **Direct optimization**: Train task loss directly at sampled dimension d
-- **Cross-dimension consistency**: Regularize lower dims to align with frozen 768-d representation
-  - L_cons = Σ_d λ_d * (1 - cosine(pad(z_d), stop_grad(z_768)))
-  - λ_d weights decay with dimension size
+### 1. Curriculum Matryoshka Learning (C-MRL)
+- **Target dimensions**: {128, 256, 512, 768}
+- **Per-batch sampling**: Sample dimension d ~ p_t(d) with annealed schedule
+  - Early training: Bias toward small dimensions (p_128=0.6, p_256=0.3, p_512=0.1, p_768=0.0)
+  - Mid training: Gradual shift to uniform (p_128=p_256=p_512=p_768=0.25)
+- **Loss components**:
+  - Task loss at sampled dimension d
+  - Cross-dimension consistency: L_cons = λ_d * (1 - cos(z_d, sg(z_768)))
+  - Stop-gradient on z_768 to prevent collapse
+  - Dimension-aware weighting: λ_d = (1 - d/768) * base_weight
 
-### 2. AdapterCache (LRU)
-- **LoRA modules**: Parameter-efficient adapters keyed by task/domain signatures
-- **LRU eviction**: Capacity K ∈ {2, 4, 8} with lazy loading on cache miss
-- **Few-shot warmup**: Optional inner loop (≤10 steps) for new adapter initialization
-- **Instrumentation**: Track hit rate, miss latency, memory overhead
+### 2. AdapterCache with LRU
+- **Architecture**: LoRA adapters (rank 8, alpha 16) per task/domain
+- **Cache management**:
+  - LRU eviction with capacity K ∈ {2, 4}
+  - Lazy loading on cache miss
+  - Track hit rate and miss latency
+- **Few-shot warmup**: Optional N-step SGD (N ≤ 10) for new adapters
+- **Signatures**: Task/domain/language identifiers for adapter selection
 
-### 3. Multi-Resolution Architecture
-- **Base encoder**: MPNet-base or similar transformer (768-d output)
-- **Truncated views**: z_d = z[:d] for d ∈ {128, 256, 512, 768}
-- **Projection heads**: Learnable projection + LayerNorm per dimension
-- **Single model**: Serves all dimension requirements via intelligent truncation
+### 3. Implementation Details
+- **Backbone**: MPNet-base (768d) or MiniLM (384d for testing)
+- **Projection heads**: Linear + LayerNorm for each target dimension
+- **Training**: Mixed precision (FP16), gradient accumulation, cosine annealing
+- **Efficiency**: Batch size tuning, FAISS indexing, embedding truncation
 
 ## Datasets
 
 ### STS-B (Semantic Textual Similarity)
-- **Source**: HuggingFace glue/stsb
-- **Train/Val/Test**: 5,749 / 1,500 / 1,379 sentence pairs
+- **Source**: HuggingFace `glue/stsb`
+- **Split**: Train (5,749), Dev (1,500), Test (1,379)
 - **Metric**: Spearman correlation
-- **Target**: ≥0.80 @ 768d, +1-2 points over vanilla MRL @ 128-256d
+- **Target**: ≥0.80 @ 768d, improvement at low dims
 
-### Retrieval_small (Document Retrieval)
-- **Source**: HuggingFace Quora duplicate questions
-- **Corpus size**: ~10,000 documents
-- **Query size**: ~1,000 queries
-- **Index**: FAISS (GPU if available, CPU fallback)
-- **Metrics**: nDCG@10 (primary), Recall@10 (optional)
-- **Target**: Match 512-768d baseline performance @ 256d
+### Retrieval Small (from Quora Duplicates)
+- **Source**: HuggingFace `quora` dataset
+- **Corpus**: ~10,000 unique questions
+- **Queries**: ~1,000 held-out questions
+- **Relevance**: Duplicate pairs define positive matches
+- **Index**: FAISS (GPU if available, else CPU)
+- **Metrics**: nDCG@10, Recall@10
 
 ## Baselines
 
 ### HuggingFace Models
 1. **all-MiniLM-L6-v2** (384d)
-   - 22M parameters, optimized for efficiency
-   - Strong performance/size trade-off
+   - Lightweight, 22M params
+   - Strong efficiency baseline
    
 2. **all-mpnet-base-v2** (768d)
-   - 110M parameters, SOTA on many tasks
-   - Primary comparison for full dimension
+   - Our primary comparison
+   - State-of-art general purpose
    
 3. **intfloat/e5-base-v2** (768d)
    - Contrastive pre-training
-   - Strong on retrieval tasks
+   - Strong retrieval performance
    
 4. **BAAI/bge-base-en-v1.5** (768d)
-   - Recent SOTA, retrieval-optimized
-   - Important for demonstrating competitiveness
+   - Recent SOTA on MTEB
+   - Multi-task trained
 
-5. **jinaai/jina-embeddings-v3** (optional)
-   - Task-specific LoRA adapters
-   - Comparison point for adapter approach
+### Vanilla MRL Baseline
+- Standard Matryoshka without curriculum
+- Same architecture as DEMRL++ minus C-MRL schedule
 
 ## Metrics
 
 ### Quality Metrics
-- **STS-B**: Spearman correlation coefficient
-- **Retrieval**: nDCG@10, Recall@10
-- **Dimension sweep**: Performance at {128, 256, 512, 768}d
-- **Adaptation**: Performance retention under A→B→C→A domain shift
+- **STS-B Spearman**: Correlation on test set
+- **Retrieval nDCG@10**: Ranking quality
+- **Retrieval Recall@10**: Coverage of relevant items
 
 ### Efficiency Metrics
-- **Latency**: ms/query @ batch_size=32
-- **Throughput**: queries per second (qps)
-- **Memory**: Embedding size in MB
-- **Disk**: Model checkpoint size
-- **Training**: Time to convergence, GPU memory usage
+- **Latency**: ms/query @ batch=32
+- **Throughput**: queries/second
+- **Embedding size**: MB for 10K vectors
+- **Memory footprint**: Peak GPU/RAM usage
 
-### AdapterCache Metrics
-- **Hit rate**: % queries served from cache
-- **Miss latency**: Time to load/warm new adapter
-- **Memory overhead**: KB per cached adapter
-- **Capacity analysis**: Performance vs K ∈ {0, 2, 4}
+### Adaptation Metrics
+- **Cache hit rate**: % queries served from cache
+- **Miss latency**: Time to load/warm adapter
+- **Domain shift robustness**: Performance on A→B→C→A
 
 ## Acceptance Criteria
 
-### Primary Requirements
-✓ **STS-B Performance**: ≥0.80 Spearman @ 768d
-✓ **Low-dim improvement**: +1-2 Spearman points over vanilla MRL @ 128-256d
-✓ **Retrieval parity**: nDCG@10 @ 256d matches 512-768d baseline
-✓ **Efficiency gain**: Lower latency and memory @ 256d vs 768d baselines
+### Primary Goals
+1. ✅ **STS-B Performance**: ≥0.80 Spearman @ 768d
+2. ✅ **Low-dim improvement**: +1-2 Spearman over vanilla MRL @ 128-256d
+3. ✅ **Efficiency win**: @ 256d, match 512-768d baseline with lower latency/size
 
-### Secondary Requirements
-✓ **Adaptation robustness**: ≥98% quality retention with AdapterCache under domain shift
-✓ **Compute overhead**: <1% extra compute with adapter switching
-✓ **Convergence**: Training completes within Colab Pro time limits
-✓ **Reproducibility**: Fixed seeds, deterministic results
+### Secondary Goals
+4. **AdapterCache**: ≥98% quality retention with K∈{2,4}
+5. **Latency bound**: <1% overhead from adapter switching
+6. **Memory efficiency**: <2GB GPU for inference
 
-## Technical Stack
+## Experimental Protocol
 
-### Core Libraries
-- **PyTorch**: 2.2-2.3 (GPU acceleration, AMP training)
-- **Transformers**: Latest stable (model loading)
-- **Sentence-Transformers**: Baseline models
-- **PEFT**: LoRA implementation
-- **FAISS**: Efficient similarity search
-- **Accelerate**: Multi-GPU support (future)
+### Training Phases
+1. **Smoke test** (2-5 min CPU): Verify loss decrease
+2. **Short GPU run**: Full dim sweep {128, 256, 512, 768}
+3. **Full training**: 10 epochs with early stopping
 
-### Development Tools
-- **Config**: PyYAML for experiment management
-- **Logging**: Built-in Python logging + W&B (optional)
-- **Testing**: pytest for unit tests
-- **Formatting**: black, ruff for code quality
-- **Visualization**: matplotlib for plots
+### Evaluation Protocol
+1. **Baseline evaluation**: All HF models on both tasks
+2. **DEMRL++ sweep**: Test each dimension
+3. **Ablations**:
+   - C-MRL vs vanilla MRL
+   - With/without consistency loss
+   - AdapterCache K ∈ {0, 2, 4}
+4. **Domain shift**: Synthetic A→B→C→A sequence
 
-## Execution Timeline
+### Reproducibility
+- Fixed seeds (42, 43, 44) for 3-run averaging
+- Log environment: CUDA version, GPU model, library versions
+- Save configs and checkpoints for all experiments
+- Generate outputs/run.json with full manifest
 
-### Phase 1: Foundation (Tasks A-C)
-- Plan documentation
-- Repository scaffolding
-- Data pipeline implementation
+## Expected Outcomes
 
-### Phase 2: Core Model (Tasks D-E)
-- C-MRL architecture
-- AdapterCache system
-- Training loop with curriculum
+### Quantitative
+- **STS-B**: 0.82-0.85 Spearman @ 768d, 0.75-0.78 @ 256d, 0.70-0.73 @ 128d
+- **Retrieval**: 0.40-0.45 nDCG@10 @ 256d matching 768d baselines
+- **Latency**: 2-3x speedup @ 256d vs 768d
+- **Memory**: 3-4x reduction @ 256d
 
-### Phase 3: Evaluation (Tasks F-G)
-- Baseline runners
-- Benchmark suite
-- Visualization tools
+### Qualitative
+- Clear quality-efficiency frontiers in plots
+- Smooth curriculum learning curves
+- Effective adapter specialization logs
 
-### Phase 4: Deployment (Tasks H-J)
-- Test coverage
-- Colab notebook
-- Documentation and reproducibility
+## Timeline
+1. **Setup** (30 min): Scaffold, configs, dependencies
+2. **Data** (1 hr): Loaders, FAISS indexing
+3. **Models** (2 hr): Encoder, MRL heads, adapters
+4. **Training** (2 hr): Loop, losses, metrics
+5. **Evaluation** (2 hr): Baselines, benchmarks, plots
+6. **Testing** (1 hr): Unit tests, smoke runs
+7. **Documentation** (1 hr): README, Colab notebook
+
+Total: ~10 hours implementation + experiments
 
 ## Risk Mitigation
+- **OOM on GPU**: Gradient accumulation, smaller batches
+- **Slow convergence**: Increase LR, adjust curriculum
+- **Cache thrashing**: Limit K, increase few-shot steps
+- **FAISS issues**: Fallback to exact search
+- **Colab timeout**: Checkpoint frequently, use Drive
 
-### Technical Risks
-- **Memory overflow**: Gradient accumulation, mixed precision, batch size tuning
-- **Convergence issues**: Learning rate scheduling, warm-up, gradient clipping
-- **Cache thrashing**: Bounded capacity, intelligent eviction policy
-
-### Operational Risks
-- **Colab timeout**: Checkpointing, session recovery
-- **Data availability**: Local caching, fallback sources
-- **Dependency conflicts**: Pinned versions, virtual environments
-
-## Success Metrics
-
-### Short-term (v1.0)
-- Working implementation passing all acceptance criteria
-- Clean, documented codebase
-- Reproducible results
-- Functional Colab demo
-
-### Long-term (Future)
-- Publication-ready results
-- Community adoption
-- Extension to temporal/streaming scenarios
-- Integration with production systems
+## Success Indicators
+- ✅ Loss convergence in training
+- ✅ Consistent improvements at low dims
+- ✅ Reproducible results across seeds
+- ✅ Clean efficiency-quality trade-offs
+- ✅ Working Colab demo < 45 minutes
