@@ -498,6 +498,36 @@ class TIDELite(nn.Module):
             temporal_emb, _ = self.forward(input_ids, attention_mask, timestamps)
             return temporal_emb
     
+    def forward_with_ablation(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+        timestamps: Optional[torch.Tensor] = None,
+        disable_temporal: bool = False,
+    ) -> torch.Tensor:
+        """Forward pass with optional temporal ablation.
+        
+        Args:
+            input_ids: Token IDs [batch_size, seq_len].
+            attention_mask: Attention mask [batch_size, seq_len].
+            timestamps: Optional timestamps [batch_size].
+            disable_temporal: If True, return base embeddings without modulation.
+            
+        Returns:
+            Embeddings [batch_size, hidden_dim].
+        """
+        base_embeddings = self.encode_base(input_ids, attention_mask)
+        
+        if disable_temporal or timestamps is None:
+            return base_embeddings
+        
+        # Apply temporal modulation
+        time_encoding = self.time_encoder(timestamps)
+        gates = self.temporal_gate(time_encoding)
+        temporal_embeddings = base_embeddings * gates
+        
+        return temporal_embeddings
+    
     def save_pretrained(self, save_directory: str) -> None:
         """Save model weights and configuration.
         
