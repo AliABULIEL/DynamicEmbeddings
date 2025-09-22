@@ -120,78 +120,7 @@ class SinusoidalTimeEncoding(nn.Module):
         return encoding
 
 
-class TemporalGatingMLP(nn.Module):
-    """MLP for generating temporal gates.
-    
-    A simple feedforward network that maps time encodings to gate values.
-    """
-    
-    def __init__(
-        self,
-        input_dim: int,
-        hidden_dim: int,
-        output_dim: int,
-        dropout: float = 0.1,
-        activation: str = "sigmoid"
-    ) -> None:
-        """Initialize temporal gating MLP.
-        
-        Args:
-            input_dim: Dimension of input (time encoding).
-            hidden_dim: Hidden layer dimension.
-            output_dim: Output dimension (should match encoder hidden_dim).
-            dropout: Dropout probability.
-            activation: Final activation ('sigmoid' or 'tanh').
-        """
-        super().__init__()
-        
-        self.fc1 = nn.Linear(input_dim, hidden_dim)
-        self.dropout = nn.Dropout(dropout)
-        self.fc2 = nn.Linear(hidden_dim, output_dim)
-        
-        if activation == "sigmoid":
-            self.activation = nn.Sigmoid()
-        elif activation == "tanh":
-            self.activation = nn.Tanh()
-        else:
-            raise ValueError(f"Unsupported activation: {activation}")
-        
-        self._init_weights()
-    
-    def _init_weights(self) -> None:
-        """Initialize weights with Xavier uniform."""
-        nn.init.xavier_uniform_(self.fc1.weight)
-        nn.init.zeros_(self.fc1.bias)
-        nn.init.xavier_uniform_(self.fc2.weight)
-        nn.init.zeros_(self.fc2.bias)
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass.
-        
-        Args:
-            timestamps: Unix timestamps in seconds [batch_size] or [batch_size, 1].
-            
-        Returns:
-            Encoded timestamps [batch_size, encoding_dim].
-        """
-        if timestamps.dim() == 1:
-            timestamps = timestamps.unsqueeze(-1)
-        elif timestamps.dim() > 2:
-            raise ValueError(f"Expected 1D or 2D timestamps, got shape {timestamps.shape}")
-        
-        # Normalize timestamps to reasonable range (days since epoch)
-        normalized_time = timestamps / 86400.0  # Convert to days
-        
-        # Apply multi-scale sinusoidal encoding
-        scaled_time = normalized_time / self.scales  # [batch, encoding_dim//2]
-        
-        # Concatenate sin and cos features
-        encoding = torch.cat([
-            torch.sin(scaled_time),
-            torch.cos(scaled_time),
-        ], dim=-1)
-        
-        return encoding
+
 
 
 class TemporalGatingMLP(nn.Module):
