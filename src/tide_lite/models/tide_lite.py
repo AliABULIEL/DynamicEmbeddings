@@ -107,6 +107,9 @@ class SinusoidalTimeEncoding(nn.Module):
         if timestamps.dim() == 1:
             timestamps = timestamps.unsqueeze(-1)
         
+        # Convert to float32 to match model dtype
+        timestamps = timestamps.float()
+        
         # Scale timestamps by different frequencies
         scaled_time = timestamps / self.scales  # [batch_size, encoding_dim//2]
         

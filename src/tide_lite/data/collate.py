@@ -125,11 +125,11 @@ class STSBCollator:
         if self.include_timestamps:
             collated["timestamps1"] = torch.tensor(
                 [item["timestamp1"] for item in batch], 
-                dtype=torch.float64
+                dtype=torch.float32
             )
             collated["timestamps2"] = torch.tensor(
                 [item["timestamp2"] for item in batch],
-                dtype=torch.float64
+                dtype=torch.float32
             )
         
         return collated
@@ -252,7 +252,7 @@ class TemporalQACollator:
         # Extract timestamps
         timestamps = torch.tensor(
             [item["timestamp"] for item in batch],
-            dtype=torch.float64
+            dtype=torch.float32
         )
         
         collated = {

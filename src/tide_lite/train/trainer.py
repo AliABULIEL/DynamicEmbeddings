@@ -13,7 +13,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import autocast, GradScaler
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torch.utils.data import DataLoader
@@ -326,8 +326,11 @@ class TIDETrainer:
         timestamps1 = batch["timestamps1"].to(self.device)
         timestamps2 = batch["timestamps2"].to(self.device)
         
+        # Determine device type for autocast
+        device_type = 'cuda' if self.device.type == 'cuda' else 'cpu'
+        
         # Forward pass with mixed precision
-        with autocast(enabled=self.config.use_amp):
+        with autocast(device_type=device_type, enabled=self.config.use_amp):
             # Encode both sentences
             temporal_emb1, base_emb1 = self.model(
                 sent1_inputs["input_ids"],

@@ -1,28 +1,29 @@
 #!/bin/bash
 
-# Code formatting script using black
+# Code formatting script using black and isort
 
-echo "🎨 Formatting code with black..."
+echo "🎨 Formatting code with black and isort..."
 
-# Format source code
-black src/ --line-length 100 --target-version py38
+# Define directories to format
+DIRS="src tests scripts"
 
-# Format tests
-black tests/ --line-length 100 --target-version py38
+# Run isort first (import sorting)
+echo "→ Sorting imports with isort..."
+isort $DIRS --quiet
 
-# Format scripts
-black scripts/*.py --line-length 100 --target-version py38
+# Run black (code formatting)
+echo "→ Formatting with black..."
+black $DIRS --quiet
 
-# Format notebooks if they exist
-if [ -d "notebooks" ]; then
-    black notebooks/*.py --line-length 100 --target-version py38 2>/dev/null || true
-fi
+# Exclude outputs and data directories
+find outputs data -name "*.py" 2>/dev/null | xargs -r rm 2>/dev/null || true
 
 echo "✓ Code formatting complete!"
 
 # Check if any files were changed
 if git diff --exit-code > /dev/null; then
-    echo "No formatting changes needed."
+    echo "✅ No formatting changes needed."
 else
-    echo "Some files were formatted. Review changes with: git diff"
+    echo "⚠️  Some files were formatted. Review changes with: git diff"
+    echo "   Run 'git add -p' to selectively stage changes."
 fi

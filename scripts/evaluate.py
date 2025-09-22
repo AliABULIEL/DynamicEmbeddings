@@ -1,86 +1,157 @@
-#!/usr/bin/env python
-"""Evaluation script for TIDE-Lite and baseline models.
+#!/usr/bin/env python3
+"""Evaluation script for TIDE-Lite models."""
 
-Usage:
-    python scripts/evaluate.py --model tide-lite --checkpoint path/to/model
-    python scripts/evaluate.py --model baseline --encoder all-MiniLM-L6-v2
-    python scripts/evaluate.py --task stsb --output-dir results/
-"""
-
-import sys
-import os
-from pathlib import Path
 import argparse
 import json
 import logging
+import sys
+from pathlib import Path
+from typing import Dict, Tuple
+
 import numpy as np
+import torch
+# Add numpy arrays to safe globals for PyTorch 2.6+
+torch.serialization.add_safe_globals([np.core.multiarray.scalar])
+from scipy.stats import spearmanr, pearsonr
+from sklearn.metrics.pairwise import cosine_similarity
+from tqdm import tqdm
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import torch
-from src.tide_lite.models.tide_lite import TIDELite
-from src.tide_lite.models.baselines import BaselineEncoder
-from src.tide_lite.eval.eval_stsb import STSBEvaluator
-from src.tide_lite.eval.retrieval_quora import QuoraRetrievalEvaluator
+from src.tide_lite.models import TIDELite, TIDELiteConfig
+from src.tide_lite.data.datasets import DatasetConfig, load_stsb_with_timestamps, load_quora
+from src.tide_lite.data.collate import STSBCollator, TextBatcher
 
+# Try to import FAISS for retrieval
+try:
+    import faiss
+    HAS_FAISS = True
+except ImportError:
+    HAS_FAISS = False
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
-def check_faiss_availability():
-    """Check if FAISS is available and which version."""
-    try:
-        import faiss
-        try:
-            # Check if GPU version is available
-            if hasattr(faiss, 'StandardGpuResources'):
-                logger.info("FAISS-GPU detected")
-                return "faiss-gpu"
-        except:
-            pass
-        logger.info("FAISS-CPU detected")
-        return "faiss-cpu"
-    except ImportError:
-        logger.error("FAISS not found. Please install faiss-cpu: pip install faiss-cpu")
-        return None
+def evaluate_stsb(model, dataset, device, batch_size=64):
+    """Evaluate on STS-B dataset."""
+    # Create TextBatcher instance with proper configuration
+    text_batcher = TextBatcher(
+        model_name=model.config.encoder_name,
+        max_length=128,
+        padding="max_length",
+        truncation=True
+    )
+    collator = STSBCollator(text_batcher, include_timestamps=True)
+    
+    dataloader = torch.utils.data.DataLoader(
+        dataset, 
+        batch_size=batch_size, 
+        collate_fn=collator,
+        shuffle=False
+    )
+    
+    model.eval()
+    predictions = []
+    labels = []
+    
+    with torch.no_grad():
+        for batch in tqdm(dataloader, desc="Evaluating"):
+            # Extract tokenized inputs from BatchEncoding objects
+            sent1_inputs = batch["sentence1_inputs"]
+            sent2_inputs = batch["sentence2_inputs"]
+            
+            # Move batch to device
+            input_ids1 = sent1_inputs["input_ids"].to(device)
+            attention_mask1 = sent1_inputs["attention_mask"].to(device)
+            timestamps1 = batch["timestamps1"].to(device)
+            
+            input_ids2 = sent2_inputs["input_ids"].to(device)
+            attention_mask2 = sent2_inputs["attention_mask"].to(device)
+            timestamps2 = batch["timestamps2"].to(device)
+            
+            # Get embeddings
+            emb1, _ = model(input_ids1, attention_mask1, timestamps1)
+            emb2, _ = model(input_ids2, attention_mask2, timestamps2)
+            
+            # Compute cosine similarity
+            cos_sim = torch.nn.functional.cosine_similarity(emb1, emb2)
+            
+            predictions.extend(cos_sim.cpu().numpy())
+            labels.extend(batch["labels"].numpy() / 5.0)  # Normalize to [0, 1]
+    
+    predictions = np.array(predictions)
+    labels = np.array(labels)
+    
+    # Compute metrics
+    spearman_corr, _ = spearmanr(predictions, labels)
+    pearson_corr, _ = pearsonr(predictions, labels)
+    mse = np.mean((predictions - labels) ** 2)
+    
+    return {
+        "spearman": spearman_corr,
+        "pearson": pearson_corr,
+        "mse": mse
+    }
+
+
+def load_checkpoint_model(checkpoint_path):
+    """Load model from checkpoint file."""
+    # Handle PyTorch 2.6+ weights_only issue
+    # Fix for PyTorch 2.6+: explicitly set weights_only=False for numpy arrays
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    
+    # Extract config
+    if "config" in checkpoint:
+        config_dict = checkpoint["config"]
+    else:
+        # Use defaults
+        config_dict = {
+            "encoder_name": "sentence-transformers/all-MiniLM-L6-v2",
+            "hidden_dim": 384,
+            "time_encoding_dim": 32,
+            "mlp_hidden_dim": 128,
+            "mlp_dropout": 0.1,
+            "gate_activation": "sigmoid",
+            "freeze_encoder": True,
+            "pooling_strategy": "mean"
+        }
+    
+    # Create model config
+    model_config = TIDELiteConfig(**{k: v for k, v in config_dict.items() if k in TIDELiteConfig.__dataclass_fields__})
+    
+    # Initialize model
+    model = TIDELite(model_config)
+    
+    # Load weights
+    if "model_state_dict" in checkpoint:
+        model.load_state_dict(checkpoint["model_state_dict"])
+    elif "temporal_gate_state_dict" in checkpoint:
+        model.temporal_gate.load_state_dict(checkpoint["temporal_gate_state_dict"])
+    
+    return model
 
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate TIDE-Lite models")
-    
-    # Model selection
-    parser.add_argument("--model", choices=["tide-lite", "baseline"], 
-                       default="tide-lite", help="Model type to evaluate")
-    parser.add_argument("--checkpoint", type=str, help="Path to TIDE-Lite checkpoint")
-    parser.add_argument("--encoder", type=str, 
-                       default="sentence-transformers/all-MiniLM-L6-v2",
-                       help="Encoder name for baseline models")
-    
-    # Task selection
-    parser.add_argument("--task", choices=["stsb", "quora", "all"], 
-                       default="all", help="Evaluation task")
-    
-    # Output
-    parser.add_argument("--output-dir", type=str, default="results/",
-                       help="Output directory for metrics")
-    
-    # Options
-    parser.add_argument("--max-samples", type=int, help="Limit samples for quick testing")
-    parser.add_argument("--device", type=str, help="Device (cuda/cpu)")
+    parser.add_argument("--model", choices=["tide-lite", "baseline"], default="tide-lite")
+    parser.add_argument("--checkpoint", type=str, help="Path to model checkpoint")
+    parser.add_argument("--encoder", type=str, default="sentence-transformers/all-MiniLM-L6-v2")
+    parser.add_argument("--task", choices=["stsb", "quora", "all"], default="stsb")
+    parser.add_argument("--output-dir", type=str, default="outputs/eval")
+    parser.add_argument("--max-samples", type=int, default=None)
+    parser.add_argument("--device", type=str, default=None)
     
     args = parser.parse_args()
     
-    # Setup logging
-    logging.basicConfig(level=logging.INFO, 
-                       format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    
     # Check FAISS
-    faiss_version = check_faiss_availability()
-    if faiss_version is None and args.task in ["quora", "all"]:
-        logger.error("FAISS required for retrieval evaluation")
-        return 1
+    if HAS_FAISS:
+        logger.info("FAISS-CPU detected")
+    else:
+        logger.info("FAISS not found - retrieval tasks will be skipped")
     
-    # Setup device
+    # Set device
     if args.device:
         device = torch.device(args.device)
     else:
@@ -92,76 +163,67 @@ def main():
         if not args.checkpoint:
             logger.error("--checkpoint required for TIDE-Lite evaluation")
             return 1
-        model = TIDELite.from_pretrained(args.checkpoint)
+        
+        # Handle checkpoint file directly
+        checkpoint_path = Path(args.checkpoint)
+        if checkpoint_path.is_file() and checkpoint_path.suffix == ".pt":
+            model = load_checkpoint_model(checkpoint_path)
+        else:
+            # Try loading as directory (old format)
+            model = TIDELite.from_pretrained(args.checkpoint)
     else:
-        model = BaselineEncoder(args.encoder)
+        # Baseline model
+        from src.tide_lite.models.baselines import load_minilm_baseline
+        model = load_minilm_baseline(args.encoder)
     
     model = model.to(device)
-    model.eval()
     
     # Create output directory
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    all_metrics = {}
+    results = {}
     
     # Evaluate on STS-B
     if args.task in ["stsb", "all"]:
         logger.info("Evaluating on STS-B...")
-        stsb_evaluator = STSBEvaluator(model, device=device)
-        stsb_metrics = stsb_evaluator.evaluate(max_samples=args.max_samples)
-        
-        # Save STS-B metrics
-        model_name = args.model if args.model == "tide-lite" else args.encoder.split("/")[-1]
-        stsb_file = stsb_evaluator.save_results(stsb_metrics, output_dir, model_name)
-        
-        all_metrics["stsb"] = {
-            "spearman": stsb_metrics.spearman,
-            "pearson": stsb_metrics.pearson,
-        }
-        logger.info(f"STS-B Spearman: {stsb_metrics.spearman:.4f}")
-    
-    # Evaluate on Quora
-    if args.task in ["quora", "all"]:
-        logger.info("Evaluating on Quora retrieval...")
-        quora_evaluator = QuoraRetrievalEvaluator(model, device=device)
-        
-        # Use smaller corpus for quick testing
-        max_corpus = args.max_samples if args.max_samples else 10000
-        max_queries = min(1000, max_corpus // 10) if args.max_samples else 1000
-        
-        quora_metrics = quora_evaluator.evaluate(
-            max_corpus_size=max_corpus,
-            max_queries=max_queries
+        dataset_config = DatasetConfig(
+            seed=42,
+            max_samples=args.max_samples,
+            cache_dir="./data"
         )
+        datasets = load_stsb_with_timestamps(dataset_config)
         
-        # Save Quora metrics
-        model_name = args.model if args.model == "tide-lite" else args.encoder.split("/")[-1]
-        quora_file = quora_evaluator.save_results(quora_metrics, output_dir, model_name)
+        stsb_results = evaluate_stsb(model, datasets["validation"], device)
+        results["stsb"] = stsb_results
         
-        all_metrics["quora"] = {
-            "ndcg_at_10": quora_metrics.ndcg_at_10,
-            "recall_at_10": quora_metrics.recall_at_10,
-            "mrr": quora_metrics.mean_reciprocal_rank,
-        }
-        logger.info(f"Quora nDCG@10: {quora_metrics.ndcg_at_10:.4f}")
+        logger.info(f"STS-B Results:")
+        logger.info(f"  Spearman: {stsb_results['spearman']:.4f}")
+        logger.info(f"  Pearson: {stsb_results['pearson']:.4f}")
+        logger.info(f"  MSE: {stsb_results['mse']:.4f}")
     
-    # Save combined metrics
-    metrics_file = output_dir / "metrics_all.json"
-    with open(metrics_file, "w") as f:
-        json.dump(all_metrics, f, indent=2)
+    # Save results (convert numpy types to Python native types for JSON)
+    results_path = output_dir / "eval_results.json"
     
-    logger.info(f"All metrics saved to {metrics_file}")
+    # Convert numpy types to native Python types
+    def convert_to_native(obj):
+        if isinstance(obj, dict):
+            return {k: convert_to_native(v) for k, v in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [convert_to_native(item) for item in obj]
+        elif isinstance(obj, (np.float32, np.float64)):
+            return float(obj)
+        elif isinstance(obj, (np.int32, np.int64)):
+            return int(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return obj
     
-    # Print summary
-    print("\n" + "="*60)
-    print("EVALUATION SUMMARY")
-    print("="*60)
-    for task, metrics in all_metrics.items():
-        print(f"\n{task.upper()}:")
-        for metric, value in metrics.items():
-            print(f"  {metric}: {value:.4f}")
-    print("="*60)
+    results_json = convert_to_native(results)
+    
+    with open(results_path, "w") as f:
+        json.dump(results_json, f, indent=2)
+    logger.info(f"Results saved to {results_path}")
     
     return 0
 
