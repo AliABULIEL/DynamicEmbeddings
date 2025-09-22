@@ -41,6 +41,31 @@ class TIDELiteConfig:
     pooling_strategy: str = "mean"
 
 
+def _pool_embeddings(hidden_states, attention_mask, strategy="mean"):
+    """Pool token embeddings based on strategy.
+    
+    Args:
+        hidden_states: Token embeddings [batch_size, seq_len, hidden_dim]
+        attention_mask: Attention mask [batch_size, seq_len]
+        strategy: Pooling strategy ("mean", "cls", "max")
+    
+    Returns:
+        Pooled embeddings [batch_size, hidden_dim]
+    """
+    if strategy == "cls":
+        return hidden_states[:, 0, :]
+    elif strategy == "max":
+        # Mask out padding tokens with -inf
+        mask_expanded = attention_mask.unsqueeze(-1).expand(hidden_states.size())
+        hidden_states[~mask_expanded.bool()] = -1e9
+        return hidden_states.max(dim=1)[0]
+    else:  # mean
+        mask_expanded = attention_mask.unsqueeze(-1).expand(hidden_states.size())
+        sum_embeddings = (hidden_states * mask_expanded).sum(dim=1)
+        sum_mask = mask_expanded.sum(dim=1)
+        return sum_embeddings / sum_mask.clamp(min=1e-9)
+
+
 class SinusoidalTimeEncoding(nn.Module):
     """Sinusoidal position encoding adapted for timestamps.
     
@@ -71,6 +96,77 @@ class SinusoidalTimeEncoding(nn.Module):
     
     def forward(self, timestamps: torch.Tensor) -> torch.Tensor:
         """Encode timestamps into sinusoidal features.
+        
+        Args:
+            timestamps: Unix timestamps [batch_size, 1] or [batch_size].
+            
+        Returns:
+            Time encodings [batch_size, encoding_dim].
+        """
+        # Ensure timestamps have correct shape
+        if timestamps.dim() == 1:
+            timestamps = timestamps.unsqueeze(-1)
+        
+        # Scale timestamps by different frequencies
+        scaled_time = timestamps / self.scales  # [batch_size, encoding_dim//2]
+        
+        # Apply sin and cos
+        sin_enc = torch.sin(scaled_time)
+        cos_enc = torch.cos(scaled_time)
+        
+        # Concatenate sin and cos encodings
+        encoding = torch.cat([sin_enc, cos_enc], dim=-1)
+        
+        return encoding
+
+
+class TemporalGatingMLP(nn.Module):
+    """MLP for generating temporal gates.
+    
+    A simple feedforward network that maps time encodings to gate values.
+    """
+    
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_dim: int,
+        output_dim: int,
+        dropout: float = 0.1,
+        activation: str = "sigmoid"
+    ) -> None:
+        """Initialize temporal gating MLP.
+        
+        Args:
+            input_dim: Dimension of input (time encoding).
+            hidden_dim: Hidden layer dimension.
+            output_dim: Output dimension (should match encoder hidden_dim).
+            dropout: Dropout probability.
+            activation: Final activation ('sigmoid' or 'tanh').
+        """
+        super().__init__()
+        
+        self.fc1 = nn.Linear(input_dim, hidden_dim)
+        self.dropout = nn.Dropout(dropout)
+        self.fc2 = nn.Linear(hidden_dim, output_dim)
+        
+        if activation == "sigmoid":
+            self.activation = nn.Sigmoid()
+        elif activation == "tanh":
+            self.activation = nn.Tanh()
+        else:
+            raise ValueError(f"Unsupported activation: {activation}")
+        
+        self._init_weights()
+    
+    def _init_weights(self) -> None:
+        """Initialize weights with Xavier uniform."""
+        nn.init.xavier_uniform_(self.fc1.weight)
+        nn.init.zeros_(self.fc1.bias)
+        nn.init.xavier_uniform_(self.fc2.weight)
+        nn.init.zeros_(self.fc2.bias)
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass.
         
         Args:
             timestamps: Unix timestamps in seconds [batch_size] or [batch_size, 1].
