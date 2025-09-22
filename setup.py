@@ -32,6 +32,8 @@ setup(
             "tide-eval-stsb=tide_lite.cli.eval_stsb_cli:main",
             "tide-eval-quora=tide_lite.cli.eval_quora_cli:main",
             "tide-eval-temporal=tide_lite.cli.eval_temporal_cli:main",
+            "tide-aggregate=tide_lite.cli.aggregate_cli:main",
+            "tide-plots=tide_lite.cli.plots_cli:main",
         ],
     },
     classifiers=[
