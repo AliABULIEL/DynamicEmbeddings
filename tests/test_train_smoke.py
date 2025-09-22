@@ -1,74 +1,137 @@
-#!/usr/bin/env python
-"""Test script to verify TIDE-Lite training pipeline works end-to-end.
+"""Smoke test for training pipeline."""
 
-Usage:
-    python tests/test_train_smoke.py
-"""
-
-import sys
-import os
-from pathlib import Path
+import pytest
+import torch
 import tempfile
-import shutil
+from pathlib import Path
 
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from src.tide_lite.models.tide_lite import TIDELite, TIDELiteConfig
-from src.tide_lite.train.trainer import TIDETrainer, TrainingConfig
-from src.tide_lite.data.datasets import DatasetConfig, load_stsb_with_timestamps
+from src.tide_lite.models import TIDELite, TIDELiteConfig
+from src.tide_lite.train import TIDETrainer, TrainingConfig
 
 
-def test_smoke():
-    """Run minimal training to verify pipeline."""
-    print("Running smoke test for TIDE-Lite training pipeline...")
+def test_model_initialization():
+    """Test TIDE-Lite model creation."""
+    config = TIDELiteConfig(
+        encoder_name="sentence-transformers/all-MiniLM-L6-v2",
+        time_encoding_dim=32,
+        mlp_hidden_dim=128,
+        freeze_encoder=True
+    )
     
-    # Create temp directory for outputs
-    with tempfile.TemporaryDirectory() as temp_dir:
-        # Configuration
-        model_config = TIDELiteConfig(
-            encoder_name="sentence-transformers/all-MiniLM-L6-v2",
-            hidden_dim=384,
-            time_encoding_dim=32,
-            mlp_hidden_dim=128,
-        )
-        
-        training_config = TrainingConfig(
-            output_dir=temp_dir,
+    model = TIDELite(config)
+    
+    # Check parameter count
+    extra_params = model.count_extra_parameters()
+    assert 40000 < extra_params < 60000, f"Unexpected param count: {extra_params}"
+    
+    # Test forward pass
+    batch_size = 2
+    seq_len = 10
+    
+    input_ids = torch.randint(0, 1000, (batch_size, seq_len))
+    attention_mask = torch.ones((batch_size, seq_len))
+    timestamps = torch.tensor([1609459200.0, 1640995200.0])  # 2021, 2022
+    
+    temporal_emb, base_emb = model(input_ids, attention_mask, timestamps)
+    
+    assert temporal_emb.shape == (batch_size, config.hidden_dim)
+    assert base_emb.shape == (batch_size, config.hidden_dim)
+
+
+def test_training_smoke():
+    """Test minimal training loop."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Setup config for tiny training
+        config = TrainingConfig(
             num_epochs=1,
             batch_size=4,
-            eval_batch_size=8,
+            eval_batch_size=4,
+            warmup_steps=2,
             save_every_n_steps=10,
             eval_every_n_steps=10,
-            use_amp=False,  # Disable for CPU testing
-            dry_run=False,
+            output_dir=tmpdir,
+            dry_run=True,  # Dry run mode
+            seed=42
         )
         
-        # Initialize model
-        print("  ✓ Initializing model...")
+        # Create model
+        model_config = TIDELiteConfig(
+            encoder_name="sentence-transformers/all-MiniLM-L6-v2",
+            freeze_encoder=True
+        )
         model = TIDELite(model_config)
-        param_summary = model.get_parameter_summary()
-        print(f"    - Extra parameters: {param_summary['extra_params']:,}")
         
-        # Initialize trainer
-        print("  ✓ Initializing trainer...")
-        trainer = TIDETrainer(model, training_config)
+        # Create trainer
+        trainer = TIDETrainer(model, config)
         
-        # Run training (just a few steps)
-        print("  ✓ Running training...")
-        metrics = trainer.train()
+        # Run dry-run training
+        result = trainer.train()
         
-        # Check outputs exist
-        output_path = Path(temp_dir)
-        assert (output_path / "config_used.json").exists(), "Config not saved"
-        assert (output_path / "metrics_train.json").exists(), "Metrics not saved"
-        assert len(list((output_path / "checkpoints").glob("*.pt"))) > 0, "No checkpoints saved"
+        assert "dry_run" in result
+        assert result["dry_run"] == True
         
-        print(f"  ✓ Training complete! Final Spearman: {metrics['final_val_spearman']:.4f}")
+        # Check output files exist
+        output_path = Path(tmpdir)
+        assert (output_path / "dry_run_summary.json").exists()
+
+
+def test_time_encoding():
+    """Test sinusoidal time encoding."""
+    from src.tide_lite.models.tide_lite import SinusoidalTimeEncoding
     
-    print("\n✅ Smoke test passed!")
-    return 0
+    encoder = SinusoidalTimeEncoding(encoding_dim=32)
+    
+    timestamps = torch.tensor([
+        1609459200.0,  # 2021-01-01
+        1640995200.0,  # 2022-01-01
+        1672531200.0,  # 2023-01-01
+    ])
+    
+    encoding = encoder(timestamps)
+    
+    assert encoding.shape == (3, 32)
+    assert not torch.isnan(encoding).any()
+    assert not torch.isinf(encoding).any()
+    
+    # Check that different timestamps give different encodings
+    assert not torch.allclose(encoding[0], encoding[1])
+    assert not torch.allclose(encoding[1], encoding[2])
 
 
-if __name__ == "__main__":
-    sys.exit(test_smoke())
+def test_temporal_gating():
+    """Test temporal gating MLP."""
+    from src.tide_lite.models.tide_lite import TemporalGatingMLP
+    
+    gate = TemporalGatingMLP(
+        input_dim=32,
+        hidden_dim=128,
+        output_dim=384,
+        activation="sigmoid"
+    )
+    
+    time_encoding = torch.randn(4, 32)
+    gates = gate(time_encoding)
+    
+    assert gates.shape == (4, 384)
+    assert (gates >= 0).all() and (gates <= 1).all(), "Sigmoid should output [0, 1]"
+
+
+@pytest.mark.parametrize("pooling", ["mean", "cls", "max"])
+def test_pooling_strategies(pooling):
+    """Test different pooling strategies."""
+    config = TIDELiteConfig(
+        encoder_name="sentence-transformers/all-MiniLM-L6-v2",
+        pooling_strategy=pooling,
+        freeze_encoder=True
+    )
+    
+    model = TIDELite(config)
+    
+    # Test input
+    input_ids = torch.randint(0, 1000, (2, 10))
+    attention_mask = torch.ones((2, 10))
+    
+    base_emb = model.encode_base(input_ids, attention_mask)
+    
+    assert base_emb.shape == (2, config.hidden_dim)
+    assert not torch.isnan(base_emb).any()

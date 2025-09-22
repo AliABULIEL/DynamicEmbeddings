@@ -1,1 +1,1 @@
-"""Tests for TIDE-Lite package."""
+"""Test suite for TIDE-Lite."""
