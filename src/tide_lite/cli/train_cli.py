@@ -449,6 +449,8 @@ def main() -> int:
             "mlp_hidden_dim": training_config.mlp_hidden_dim,
             "mlp_dropout": training_config.mlp_dropout,
             "freeze_encoder": training_config.freeze_encoder,
+            "pooling_strategy": training_config.pooling_strategy,
+            "gate_activation": training_config.gate_activation,
         }
         model_config = TIDELiteConfig(**model_config_params)
         

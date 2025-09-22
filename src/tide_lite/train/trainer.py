@@ -82,6 +82,8 @@ class TrainingConfig:
     mlp_hidden_dim: int = 128
     mlp_dropout: float = 0.1
     freeze_encoder: bool = True
+    pooling_strategy: str = "mean"  # "mean", "cls", or "max"
+    gate_activation: str = "sigmoid"  # "sigmoid" or "tanh"
     
     # Data
     batch_size: int = 32
@@ -116,6 +118,8 @@ class TrainingConfig:
     seed: int = 42
     log_level: str = "INFO"
     dry_run: bool = False
+    device: Optional[str] = None  # "cpu", "cuda", or None (auto-detect)
+    temporal_enabled: bool = True  # Enable temporal module
     
     def __post_init__(self) -> None:
         """Post-initialization setup."""
@@ -158,7 +162,10 @@ class TIDETrainer:
         set_global_seed(config.seed)
         
         # Move model to device
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if config.device:
+            self.device = torch.device(config.device)
+        else:
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = self.model.to(self.device)
         
         # Initialize components (will be setup in prepare_training)
