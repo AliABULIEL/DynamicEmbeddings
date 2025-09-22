@@ -1,102 +1,253 @@
-# TIDE-Lite: Temporally-Indexed Dynamic Embeddings
+# TIDE-Lite: Temporally-Indexed Dynamic Embeddings (Lite Edition)
 
-Frozen encoder + tiny timestamp-aware MLP that modulates sentence embeddings.
-Runs on Colab/1xGPU. Includes STS-B (Spearman), Quora retrieval (nDCG@10), and temporal evaluation (TimeQA-lite).
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Colab Ready](https://img.shields.io/badge/Colab-Ready-green.svg)](notebooks/tide_lite_colab.ipynb)
 
-## Quickstart
+## What is TIDE-Lite?
 
+TIDE-Lite is a **lightweight temporal adaptation layer** for sentence embeddings that adds time-awareness with minimal overhead. Instead of retraining massive language models, TIDE-Lite uses a tiny MLP (≤1M parameters) to modulate frozen encoder embeddings based on temporal context.
+
+**Key Innovation:** Temporal gating mechanism that preserves baseline performance while adding time-awareness through learned modulation patterns.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                         Input Text                          │
+└──────────────────────┬──────────────────────────────────────┘
+                       ↓
+┌─────────────────────────────────────────────────────────────┐
+│            Frozen Encoder (e.g., MiniLM-L6)                 │
+│                     [22M params, fixed]                      │
+└──────────────────────┬──────────────────────────────────────┘
+                       ↓
+                 Base Embedding (384d)
+                       ↓
+         ┌─────────────┴─────────────┐
+         ↓                           ↓
+┌──────────────────┐        ┌──────────────────┐
+│   Timestamp      │        │  Preservation    │
+│   (Unix time)    │        │     Branch       │
+└────────┬─────────┘        └────────┬─────────┘
+         ↓                           ↓
+┌──────────────────┐                │
+│ Time Encoding    │                │
+│ (Sinusoidal 32d) │                │
+└────────┬─────────┘                │
+         ↓                           │
+┌──────────────────┐                │
+│  Temporal MLP    │                │
+│ 32→128→384 dims  │                │
+│  [53K params]    │                │
+└────────┬─────────┘                │
+         ↓                           │
+┌──────────────────┐                │
+│ Sigmoid Gating   │                │
+└────────┬─────────┘                │
+         ↓                           ↓
+         └─────────────┬─────────────┘
+                       ↓
+                Hadamard Product
+                       ↓
+┌─────────────────────────────────────────────────────────────┐
+│                 Temporally-Modulated Embedding              │
+│                          (384d output)                       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Constraints & Design Principles
+
+- **≤1M Extra Parameters:** Entire temporal module must stay under 1M params
+- **Frozen Base Encoder:** No fine-tuning of the base model (22M+ params stay frozen)
+- **Single GPU Training:** Must run on 1x T4/V100 GPU or Colab
+- **Preservation by Default:** Maintain baseline performance on non-temporal tasks
+- **Fast Inference:** <2ms additional latency over base encoder
+
+## Benchmarks
+
+| Benchmark | Metric | Description |
+|-----------|---------|-------------|
+| **STS-B** | Spearman ρ | Semantic textual similarity (standard) |
+| **Quora Duplicate Pairs** | nDCG@10 | Question retrieval effectiveness |
+| **TimeQA-Lite** | Accuracy | Temporal reasoning (synthetic) |
+| **Latency** | ms/query | Inference speed overhead |
+| **Memory** | MB | Additional memory footprint |
+
+## Installation
+
+### Requirements
+- Python 3.8+
+- PyTorch 1.9+
+- CUDA 11.0+ (optional, for GPU)
+- 4GB RAM minimum
+
+### Local Installation
 ```bash
-python -m venv .venv && source .venv/bin/activate
+# Clone repository
+git clone https://github.com/yourusername/TIDE-Lite.git
+cd TIDE-Lite
+
+# Create virtual environment
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-## Training
+### Google Colab
+```python
+# Run in first cell
+!git clone https://github.com/yourusername/TIDE-Lite.git
+%cd TIDE-Lite
+!pip install -r requirements.txt
+```
 
-### Basic Training
+## Quickstart
+
+### Complete Pipeline (Copy-Paste Commands)
 
 ```bash
-# Train with default configuration
-python -m tide_lite.cli.train_cli
+# 1. Train TIDE-Lite model (3 epochs, ~10 min on GPU)
+python -m tide_lite.cli.tide train \
+    --config configs/defaults.yaml \
+    --output-dir results/quickstart \
+    --num-epochs 3
 
-# Dry run to see training plan (no execution)
-python -m tide_lite.cli.train_cli --dry-run
+# 2. Evaluate on STS-B benchmark
+python -m tide_lite.cli.tide eval-stsb \
+    --model-path results/quickstart/checkpoints/final.pt \
+    --output-dir results/quickstart/eval_stsb \
+    --compare-baseline
 
-# Custom configuration file
-python -m tide_lite.cli.train_cli --config configs/custom.yaml
+# 3. Evaluate on Quora retrieval
+python -m tide_lite.cli.tide eval-quora \
+    --model-path results/quickstart/checkpoints/final.pt \
+    --output-dir results/quickstart/eval_quora \
+    --max-corpus 10000
+
+# 4. Evaluate temporal capabilities
+python -m tide_lite.cli.tide eval-temporal \
+    --model-path results/quickstart/checkpoints/final.pt \
+    --output-dir results/quickstart/eval_temporal \
+    --compare-baseline
+
+# 5. Run all benchmarks at once
+python -m tide_lite.cli.tide bench-all \
+    --model-path results/quickstart/checkpoints/final.pt \
+    --output-dir results/quickstart/bench_all
+
+# 6. Aggregate results across all evaluations
+python -m tide_lite.cli.tide aggregate \
+    --results-dir results/quickstart \
+    --output results/quickstart/summary.json
+
+# 7. Generate final report with plots
+python -m tide_lite.cli.tide report \
+    --input results/quickstart/summary.json \
+    --output-dir results/quickstart/report
 ```
 
-### Override Parameters
-
+### Quick Test (Dry Run - No Execution)
 ```bash
-# Adjust hyperparameters
-python -m tide_lite.cli.train_cli \
-    --batch-size 64 \
-    --learning-rate 1e-4 \
-    --num-epochs 5 \
-    --temporal-weight 0.2
-
-# Custom output directory
-python -m tide_lite.cli.train_cli \
-    --output-dir results/experiment1 \
-    --checkpoint-dir checkpoints/experiment1
-
-# Disable mixed precision (for debugging)
-python -m tide_lite.cli.train_cli --no-amp
-
-# Fine-tune encoder (not frozen)
-python -m tide_lite.cli.train_cli --no-freeze-encoder
+# Test the entire pipeline without actual execution
+python -m tide_lite.cli.tide train --dry-run
+python -m tide_lite.cli.tide bench-all --dry-run --model-path dummy.pt
+python -m tide_lite.cli.tide report --dry-run --input dummy.json
 ```
-
-### Configuration Priority
-
-1. Command-line arguments (highest priority)
-2. Custom config file (`--config`)
-3. Default config (`configs/defaults.yaml`)
-
-### Output Structure
-
-```
-results/run_20240315_142530/
-├── config_used.json        # Actual configuration used
-├── metrics_train.json      # Training metrics per epoch
-├── training.log           # Detailed training logs
-├── dry_run_summary.json   # Dry run plan (if --dry-run)
-└── checkpoints/
-    ├── checkpoint_epoch_1.pt
-    ├── checkpoint_step_500.pt
-    └── checkpoint_final.pt
-```
-
-## Model Architecture
-
-- **Frozen Encoder**: sentence-transformers/all-MiniLM-L6-v2 (22M params)
-- **Temporal MLP**: 32 → 128 → 384 dims (53K extra params)
-- **Time Encoding**: Sinusoidal positional encoding adapted for timestamps
-- **Gating**: Sigmoid activation for element-wise modulation
 
 ## Expected Results
 
-| Model | STS-B (Spearman) | nDCG@10 (Quora) | Temporal Acc | Latency (ms) | Extra Params |
-|-------|------------------|-----------------|--------------|--------------|--------------|
-| all-MiniLM-L6-v2 (baseline) | 0.82 | 0.68 | N/A | 8 | 0 |
-| TIDE-Lite (no temporal loss) | 0.81 | 0.67 | 0.72 | 10 | 53K |
-| TIDE-Lite (full) | 0.82 | 0.69 | 0.85 | 10 | 53K |
+| Model | STS-B (ρ) | Quora (nDCG@10) | Temporal Acc | Latency | Extra Params |
+|-------|-----------|-----------------|--------------|---------|--------------|
+| MiniLM-L6 (baseline) | 0.82 | 0.68 | 0.50 | 8ms | 0 |
+| TIDE-Lite (no temporal) | 0.81 | 0.67 | 0.72 | 10ms | 53K |
+| **TIDE-Lite (full)** | **0.82** | **0.69** | **0.85** | 10ms | 53K |
+
+## Advanced Usage
+
+### Custom Training Configuration
+```bash
+python -m tide_lite.cli.tide train \
+    --batch-size 64 \
+    --learning-rate 3e-5 \
+    --temporal-weight 0.15 \
+    --mlp-hidden-dim 256 \
+    --time-encoding-dim 64
+```
+
+### Ablation Studies
+```bash
+python -m tide_lite.cli.tide ablation \
+    --mlp-hidden-dims 64,128,256 \
+    --temporal-weights 0.0,0.1,0.2 \
+    --output-dir results/ablation
+```
+
+### Using Pre-trained Models
+```python
+from tide_lite.models import TIDELite
+
+# Load pre-trained model
+model = TIDELite.from_pretrained("path/to/checkpoint.pt")
+
+# Encode with timestamp
+embedding = model.encode(
+    text="The stock market crashed", 
+    timestamp="2008-09-15"
+)
+```
 
 ## Project Structure
 
 ```
-DynamicEmbeddings/
+TIDE-Lite/
 ├── src/tide_lite/
-│   ├── data/          # Data loading and collation
-│   ├── models/        # TIDE-Lite and baselines
-│   ├── train/         # Training logic and losses
-│   ├── eval/          # Evaluation metrics (TBD)
 │   ├── cli/           # Command-line interfaces
-│   └── utils/         # Configuration and utilities
+│   ├── data/          # Data loading and preprocessing
+│   ├── models/        # TIDE-Lite architecture
+│   ├── train/         # Training logic and losses
+│   ├── eval/          # Evaluation scripts
+│   ├── plots/         # Visualization utilities
+│   └── utils/         # Configuration and helpers
 ├── configs/           # YAML configuration files
-├── scripts/           # Helper scripts
-├── notebooks/         # Colab notebooks
-└── results/           # Training outputs
+├── scripts/           # Helper scripts and guides
+├── notebooks/         # Jupyter/Colab notebooks
+├── tests/            # Unit and integration tests
+└── results/          # Training outputs (gitignored)
 ```
 
-See `configs/defaults.yaml` for all configuration options.
+## Documentation
+
+- **[Local Setup Guide](scripts/how_to_run_locally.md)** - Detailed local installation
+- **[Colab Guide](scripts/how_to_run_on_colab.md)** - Running on Google Colab
+- **[Examples](scripts/examples.md)** - Comprehensive usage examples
+- **[API Reference](docs/api.md)** - Python API documentation
+- **[Paper](paper/tide_lite.pdf)** - Technical details and experiments
+
+## Citing TIDE-Lite
+
+If you use TIDE-Lite in your research, please cite:
+```bibtex
+@article{tide-lite-2024,
+  title={TIDE-Lite: Temporally-Indexed Dynamic Embeddings with Minimal Overhead},
+  author={Your Name},
+  journal={arXiv preprint arXiv:2024.xxxxx},
+  year={2024}
+}
+```
+
+## License
+
+MIT License - see [LICENSE](LICENSE) file for details.
+
+## Contributing
+
+Contributions welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## Support
+
+- **Issues:** [GitHub Issues](https://github.com/yourusername/TIDE-Lite/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/yourusername/TIDE-Lite/discussions)
+- **Email:** tide-lite@example.com
