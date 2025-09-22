@@ -39,3 +39,10 @@ eval_every_n_steps: 500
 seed: 42
 log_level: "INFO"
 dry_run: false
+device: "auto"  # auto, cpu, cuda
+temporal_enabled: true  # Enable/disable temporal module
+gate_activation: "sigmoid"  # sigmoid or tanh
+
+# Output paths
+output_dir: "results/default_run"
+checkpoint_dir: null  # Uses output_dir/checkpoints if null

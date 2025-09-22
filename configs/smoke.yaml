@@ -1,0 +1,48 @@
+# Smoke test configuration - minimal CPU run for quick validation
+# ~2-5 minutes on CPU
+
+# Model configuration
+encoder_name: "sentence-transformers/all-MiniLM-L6-v2"
+hidden_dim: 384
+time_encoding_dim: 32
+mlp_hidden_dim: 128
+mlp_dropout: 0.1
+freeze_encoder: true
+pooling_strategy: "mean"
+gate_activation: "sigmoid"
+
+# Data configuration (tiny subset)
+batch_size: 8
+eval_batch_size: 16
+max_seq_length: 64  # Shorter sequences for speed
+num_workers: 0  # Single process for CPU
+
+# Training configuration (minimal)
+num_epochs: 1
+learning_rate: 1.0e-4
+warmup_steps: 10
+weight_decay: 0.01
+gradient_clip: 1.0
+
+# Loss weights
+temporal_weight: 0.1
+preservation_weight: 0.05
+tau_seconds: 86400.0
+
+# Mixed precision
+use_amp: false  # Disable for CPU
+
+# Checkpointing
+save_every_n_steps: 100
+eval_every_n_steps: 50
+
+# Output paths
+output_dir: "outputs/smoke_test"
+checkpoint_dir: "outputs/smoke_test/checkpoints"
+
+# Misc
+seed: 42
+log_level: "INFO"
+dry_run: false
+device: "cpu"  # Force CPU
+temporal_enabled: true  # Enable temporal module
