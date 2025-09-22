@@ -16,6 +16,7 @@ import yaml
 
 from ..models.tide_lite import TIDELite, TIDELiteConfig
 from ..train.trainer import TIDETrainer, TrainingConfig
+from ..config import load_and_validate_config, preflight_check
 
 logger = logging.getLogger(__name__)
 
@@ -421,8 +422,10 @@ def main() -> int:
     args = parser.parse_args()
     
     try:
-        # Load base configuration
+        # Run preflight validation check
         if args.config.exists():
+            if not preflight_check(args.config):
+                print("\n⚠️  Config validation had warnings but continuing...", file=sys.stderr)
             base_config = load_yaml_config(args.config)
         else:
             print(f"Warning: Config file {args.config} not found, using defaults")
@@ -438,8 +441,12 @@ def main() -> int:
         # Merge configurations
         final_config = merge_configs(base_config, cli_overrides)
         
-        # Create configuration objects
-        training_config = TrainingConfig(**final_config)
+        # Validate merged config
+        from ..config import validate_config_dict
+        validated_config = validate_config_dict(final_config, strict=False)
+        
+        # Convert to TrainingConfig
+        training_config = validated_config.to_training_config()
         
         # Extract model config parameters
         model_config_params = {
