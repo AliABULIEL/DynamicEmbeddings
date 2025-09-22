@@ -155,11 +155,16 @@ class TIDEConfig:
         """
         # Get valid field names
         if HAS_PYDANTIC:
-            valid_fields = set(cls.__fields__.keys())
+            try:
+                valid_fields = set(cls.__fields__.keys())
+            except AttributeError:
+                # Fallback if __fields__ doesn't exist
+                import dataclasses
+                valid_fields = set(f.name for f in dataclasses.fields(cls))
         else:
             # For regular dataclass
-            import inspect
-            valid_fields = set(inspect.signature(cls).parameters.keys())
+            import dataclasses
+            valid_fields = set(f.name for f in dataclasses.fields(cls))
         
         # Filter unknown keys
         unknown_keys = set(config_dict.keys()) - valid_fields

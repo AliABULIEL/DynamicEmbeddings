@@ -43,12 +43,18 @@ def load_and_validate_config(
     
     # Get valid field names from schema
     if HAS_PYDANTIC:
-        from .schema import TIDEConfig
-        valid_fields = set(TIDEConfig.__fields__.keys())
+        try:
+            from .schema import TIDEConfig
+            valid_fields = set(TIDEConfig.__fields__.keys())
+        except AttributeError:
+            # Fallback if __fields__ doesn't exist
+            import dataclasses
+            from .schema import TIDEConfig
+            valid_fields = set(f.name for f in dataclasses.fields(TIDEConfig))
     else:
-        import inspect
+        import dataclasses
         from .schema import TIDEConfig
-        valid_fields = set(inspect.signature(TIDEConfig).parameters.keys())
+        valid_fields = set(f.name for f in dataclasses.fields(TIDEConfig))
     
     # Check for unknown keys
     unknown_keys = set(raw_config.keys()) - valid_fields
@@ -89,12 +95,18 @@ def validate_config_dict(
     """
     # Get valid field names
     if HAS_PYDANTIC:
-        from .schema import TIDEConfig
-        valid_fields = set(TIDEConfig.__fields__.keys())
+        try:
+            from .schema import TIDEConfig
+            valid_fields = set(TIDEConfig.__fields__.keys())
+        except AttributeError:
+            # Fallback if __fields__ doesn't exist
+            import dataclasses
+            from .schema import TIDEConfig
+            valid_fields = set(f.name for f in dataclasses.fields(TIDEConfig))
     else:
-        import inspect
+        import dataclasses
         from .schema import TIDEConfig
-        valid_fields = set(inspect.signature(TIDEConfig).parameters.keys())
+        valid_fields = set(f.name for f in dataclasses.fields(TIDEConfig))
     
     # Check for unknown keys
     unknown_keys = set(config_dict.keys()) - valid_fields
@@ -195,11 +207,17 @@ def get_unknown_keys(config_path: Path) -> Set[str]:
     
     # Get valid fields
     if HAS_PYDANTIC:
-        from .schema import TIDEConfig
-        valid_fields = set(TIDEConfig.__fields__.keys())
+        try:
+            from .schema import TIDEConfig
+            valid_fields = set(TIDEConfig.__fields__.keys())
+        except AttributeError:
+            # Fallback if __fields__ doesn't exist
+            import dataclasses
+            from .schema import TIDEConfig
+            valid_fields = set(f.name for f in dataclasses.fields(TIDEConfig))
     else:
-        import inspect
+        import dataclasses
         from .schema import TIDEConfig
-        valid_fields = set(inspect.signature(TIDEConfig).parameters.keys())
+        valid_fields = set(f.name for f in dataclasses.fields(TIDEConfig))
     
     return set(raw_config.keys()) - valid_fields

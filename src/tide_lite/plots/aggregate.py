@@ -407,8 +407,8 @@ class ResultAggregator:
 
 
 def aggregate_results(
-    results_dir: Union[str, Path],
-    output_dir: Optional[Union[str, Path]] = None,
+    results_dir,
+    output_dir = None,
     save_csv: bool = True,
     save_json: bool = True,
     save_markdown: bool = True,

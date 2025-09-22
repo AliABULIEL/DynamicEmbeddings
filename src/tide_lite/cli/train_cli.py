@@ -16,7 +16,6 @@ import yaml
 
 from ..models.tide_lite import TIDELite, TIDELiteConfig
 from ..train.trainer import TIDETrainer, TrainingConfig
-from ..config import load_and_validate_config, preflight_check
 
 logger = logging.getLogger(__name__)
 
@@ -61,17 +60,7 @@ def merge_configs(
     
     for key, value in overrides.items():
         if value is not None:
-            # Handle nested keys (e.g., "model.hidden_dim")
-            if "." in key:
-                parts = key.split(".")
-                current = merged
-                for part in parts[:-1]:
-                    if part not in current:
-                        current[part] = {}
-                    current = current[part]
-                current[parts[-1]] = value
-            else:
-                merged[key] = value
+            merged[key] = value
     
     return merged
 
@@ -86,23 +75,6 @@ def setup_argument_parser() -> argparse.ArgumentParser:
         prog="tide-lite-train",
         description="Train TIDE-Lite temporal embedding models",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Train with default configuration
-  tide-lite-train
-  
-  # Train with custom config file
-  tide-lite-train --config configs/custom.yaml
-  
-  # Override specific parameters
-  tide-lite-train --batch-size 64 --learning-rate 1e-4 --num-epochs 5
-  
-  # Dry run to see training plan
-  tide-lite-train --dry-run
-  
-  # Custom output directory
-  tide-lite-train --output-dir results/experiment1
-""",
     )
     
     # Config file
@@ -110,7 +82,7 @@ Examples:
         "--config",
         type=Path,
         default=Path("configs/defaults.yaml"),
-        help="Path to YAML configuration file (default: configs/defaults.yaml)",
+        help="Path to YAML configuration file",
     )
     
     # Output paths
@@ -118,178 +90,57 @@ Examples:
         "--output-dir",
         type=str,
         default=None,
-        help="Output directory for results (default: results/run-<timestamp>)",
-    )
-    
-    parser.add_argument(
-        "--checkpoint-dir",
-        type=str,
-        default=None,
-        help="Directory for checkpoints (default: <output-dir>/checkpoints)",
+        help="Output directory for results",
     )
     
     # Model configuration
-    model_group = parser.add_argument_group("model")
-    model_group.add_argument(
+    parser.add_argument(
         "--encoder-name",
         type=str,
         default=None,
         help="HuggingFace encoder model name",
     )
     
-    model_group.add_argument(
-        "--hidden-dim",
-        type=int,
-        default=None,
-        help="Hidden dimension of encoder",
-    )
-    
-    model_group.add_argument(
-        "--time-encoding-dim",
-        type=int,
-        default=None,
-        help="Dimension of temporal encoding",
-    )
-    
-    model_group.add_argument(
+    parser.add_argument(
         "--mlp-hidden-dim",
         type=int,
         default=None,
         help="Hidden dimension of temporal MLP",
     )
     
-    model_group.add_argument(
-        "--mlp-dropout",
-        type=float,
-        default=None,
-        help="Dropout probability in temporal MLP",
-    )
-    
-    model_group.add_argument(
-        "--no-freeze-encoder",
-        action="store_true",
-        help="Don't freeze encoder weights (allow fine-tuning)",
-    )
-    
     # Training configuration
-    train_group = parser.add_argument_group("training")
-    train_group.add_argument(
+    parser.add_argument(
         "--batch-size",
         type=int,
         default=None,
         help="Training batch size",
     )
     
-    train_group.add_argument(
-        "--eval-batch-size",
-        type=int,
-        default=None,
-        help="Evaluation batch size",
-    )
-    
-    train_group.add_argument(
+    parser.add_argument(
         "--num-epochs",
         type=int,
         default=None,
         help="Number of training epochs",
     )
     
-    train_group.add_argument(
+    parser.add_argument(
         "--learning-rate",
         type=float,
         default=None,
         help="Peak learning rate",
     )
     
-    train_group.add_argument(
-        "--warmup-steps",
-        type=int,
-        default=None,
-        help="Number of warmup steps",
-    )
-    
-    train_group.add_argument(
-        "--weight-decay",
-        type=float,
-        default=None,
-        help="AdamW weight decay",
-    )
-    
-    train_group.add_argument(
-        "--gradient-clip",
-        type=float,
-        default=None,
-        help="Gradient clipping norm",
-    )
-    
-    # Loss configuration
-    loss_group = parser.add_argument_group("loss")
-    loss_group.add_argument(
+    parser.add_argument(
         "--temporal-weight",
         type=float,
         default=None,
         help="Weight for temporal consistency loss",
     )
     
-    loss_group.add_argument(
-        "--preservation-weight",
-        type=float,
-        default=None,
-        help="Weight for base embedding preservation",
-    )
-    
-    loss_group.add_argument(
-        "--tau-seconds",
-        type=float,
-        default=None,
-        help="Time constant for temporal consistency (seconds)",
-    )
-    
-    # Hardware configuration
-    hw_group = parser.add_argument_group("hardware")
-    hw_group.add_argument(
-        "--no-amp",
+    parser.add_argument(
+        "--use-amp",
         action="store_true",
-        help="Disable automatic mixed precision",
-    )
-    
-    hw_group.add_argument(
-        "--num-workers",
-        type=int,
-        default=None,
-        help="DataLoader worker threads",
-    )
-    
-    # Checkpointing
-    ckpt_group = parser.add_argument_group("checkpointing")
-    ckpt_group.add_argument(
-        "--save-every-n-steps",
-        type=int,
-        default=None,
-        help="Checkpoint frequency (steps)",
-    )
-    
-    ckpt_group.add_argument(
-        "--eval-every-n-steps",
-        type=int,
-        default=None,
-        help="Evaluation frequency (steps)",
-    )
-    
-    # Misc
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=None,
-        help="Random seed for reproducibility",
-    )
-    
-    parser.add_argument(
-        "--log-level",
-        type=str,
-        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        default=None,
-        help="Logging verbosity",
+        help="Enable automatic mixed precision",
     )
     
     parser.add_argument(
@@ -298,117 +149,38 @@ Examples:
         help="Perform dry run without actual training",
     )
     
-    parser.add_argument(
-        "--version",
-        action="version",
-        version="TIDE-Lite v0.1.0",
-    )
-    
     return parser
 
 
-def args_to_config_dict(args: argparse.Namespace) -> Dict[str, Any]:
-    """Convert parsed arguments to configuration dictionary.
+def split_configs(config_dict: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    """Split configuration into model and training configs.
     
     Args:
-        args: Parsed command-line arguments.
+        config_dict: Combined configuration dictionary.
         
     Returns:
-        Configuration dictionary with non-None values.
+        Tuple of (model_config_dict, training_config_dict).
     """
-    config_dict = {}
-    
-    # Direct mappings
-    simple_mappings = {
-        "output_dir": "output_dir",
-        "checkpoint_dir": "checkpoint_dir",
-        "encoder_name": "encoder_name",
-        "hidden_dim": "hidden_dim",
-        "time_encoding_dim": "time_encoding_dim",
-        "mlp_hidden_dim": "mlp_hidden_dim",
-        "mlp_dropout": "mlp_dropout",
-        "batch_size": "batch_size",
-        "eval_batch_size": "eval_batch_size",
-        "num_epochs": "num_epochs",
-        "learning_rate": "learning_rate",
-        "warmup_steps": "warmup_steps",
-        "weight_decay": "weight_decay",
-        "gradient_clip": "gradient_clip",
-        "temporal_weight": "temporal_weight",
-        "preservation_weight": "preservation_weight",
-        "tau_seconds": "tau_seconds",
-        "num_workers": "num_workers",
-        "save_every_n_steps": "save_every_n_steps",
-        "eval_every_n_steps": "eval_every_n_steps",
-        "seed": "seed",
-        "log_level": "log_level",
-        "dry_run": "dry_run",
+    # Model config fields
+    model_fields = {
+        "encoder_name", "hidden_dim", "time_encoding_dim", 
+        "mlp_hidden_dim", "mlp_dropout", "gate_activation",
+        "freeze_encoder", "pooling_strategy"
     }
     
-    for arg_name, config_name in simple_mappings.items():
-        value = getattr(args, arg_name, None)
-        if value is not None:
-            config_dict[config_name] = value
+    # Training config fields
+    training_fields = {
+        "batch_size", "eval_batch_size", "max_seq_length", "num_workers",
+        "num_epochs", "learning_rate", "warmup_steps", "weight_decay", 
+        "gradient_clip", "temporal_weight", "preservation_weight", 
+        "tau_seconds", "use_amp", "save_every_n_steps", "eval_every_n_steps",
+        "output_dir", "checkpoint_dir", "seed", "log_level", "dry_run"
+    }
     
-    # Boolean inversions
-    if args.no_freeze_encoder:
-        config_dict["freeze_encoder"] = False
+    model_config = {k: v for k, v in config_dict.items() if k in model_fields}
+    training_config = {k: v for k, v in config_dict.items() if k in training_fields}
     
-    if args.no_amp:
-        config_dict["use_amp"] = False
-    
-    return config_dict
-
-
-def generate_run_id() -> str:
-    """Generate unique run identifier based on timestamp.
-    
-    Returns:
-        Run ID string.
-    """
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return f"run_{timestamp}"
-
-
-def print_training_plan(config: TrainingConfig) -> None:
-    """Print training execution plan.
-    
-    Args:
-        config: Training configuration.
-    """
-    print("\n" + "=" * 60)
-    print("TIDE-LITE TRAINING PLAN")
-    print("=" * 60)
-    
-    print("\n📊 Model Configuration:")
-    print(f"  • Encoder: {config.encoder_name}")
-    print(f"  • Hidden dim: {config.hidden_dim}")
-    print(f"  • Time encoding dim: {config.time_encoding_dim}")
-    print(f"  • MLP hidden dim: {config.mlp_hidden_dim}")
-    print(f"  • Frozen encoder: {config.freeze_encoder}")
-    
-    print("\n🔄 Training Configuration:")
-    print(f"  • Epochs: {config.num_epochs}")
-    print(f"  • Batch size: {config.batch_size}")
-    print(f"  • Learning rate: {config.learning_rate}")
-    print(f"  • Warmup steps: {config.warmup_steps}")
-    print(f"  • Mixed precision: {config.use_amp}")
-    
-    print("\n⚖️ Loss Configuration:")
-    print(f"  • Temporal weight: {config.temporal_weight}")
-    print(f"  • Preservation weight: {config.preservation_weight}")
-    print(f"  • Tau (days): {config.tau_seconds / 86400:.1f}")
-    
-    print("\n💾 Output Configuration:")
-    print(f"  • Output dir: {config.output_dir}")
-    print(f"  • Checkpoint dir: {config.checkpoint_dir}")
-    print(f"  • Save frequency: every {config.save_every_n_steps} steps")
-    print(f"  • Eval frequency: every {config.eval_every_n_steps} steps")
-    
-    if config.dry_run:
-        print("\n⚠️  DRY RUN MODE - No actual training will occur")
-    
-    print("\n" + "=" * 60 + "\n")
+    return model_config, training_config
 
 
 def main() -> int:
@@ -422,47 +194,54 @@ def main() -> int:
     args = parser.parse_args()
     
     try:
-        # Run preflight validation check
+        # Load base config from file if exists
+        base_config = {}
         if args.config.exists():
-            if not preflight_check(args.config):
-                print("\n⚠️  Config validation had warnings but continuing...", file=sys.stderr)
             base_config = load_yaml_config(args.config)
         else:
             print(f"Warning: Config file {args.config} not found, using defaults")
-            base_config = {}
         
-        # Convert args to config dict
-        cli_overrides = args_to_config_dict(args)
+        # Convert args to config dict (only non-None values)
+        cli_overrides = {}
+        for key in ["output_dir", "encoder_name", "mlp_hidden_dim", "batch_size", 
+                    "num_epochs", "learning_rate", "temporal_weight", "dry_run"]:
+            value = getattr(args, key.replace("-", "_"), None)
+            if value is not None:
+                cli_overrides[key.replace("-", "_")] = value
         
-        # Generate output directory if not specified
-        if "output_dir" not in cli_overrides and "output_dir" not in base_config:
-            cli_overrides["output_dir"] = f"results/{generate_run_id()}"
+        if args.use_amp:
+            cli_overrides["use_amp"] = True
         
         # Merge configurations
         final_config = merge_configs(base_config, cli_overrides)
         
-        # Validate merged config
-        from ..config import validate_config_dict
-        validated_config = validate_config_dict(final_config, strict=False)
+        # Generate output directory if not specified
+        if "output_dir" not in final_config:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            final_config["output_dir"] = f"results/run_{timestamp}"
         
-        # Convert to TrainingConfig
-        training_config = validated_config.to_training_config()
+        # Split into model and training configs
+        model_config_dict, training_config_dict = split_configs(final_config)
         
-        # Extract model config parameters
-        model_config_params = {
-            "encoder_name": training_config.encoder_name,
-            "hidden_dim": training_config.hidden_dim,
-            "time_encoding_dim": training_config.time_encoding_dim,
-            "mlp_hidden_dim": training_config.mlp_hidden_dim,
-            "mlp_dropout": training_config.mlp_dropout,
-            "freeze_encoder": training_config.freeze_encoder,
-            "pooling_strategy": training_config.pooling_strategy,
-            "gate_activation": training_config.gate_activation,
-        }
-        model_config = TIDELiteConfig(**model_config_params)
+        # Create config objects with defaults
+        model_config = TIDELiteConfig(**model_config_dict)
+        training_config = TrainingConfig(**training_config_dict)
         
         # Print training plan
-        print_training_plan(training_config)
+        print("\n" + "=" * 60)
+        print("TIDE-LITE TRAINING PLAN")
+        print("=" * 60)
+        print(f"\n📊 Model: {model_config.encoder_name}")
+        print(f"   Extra params: ~{model_config.mlp_hidden_dim * 600} (estimated)")
+        print(f"\n🔄 Training: {training_config.num_epochs} epochs")
+        print(f"   Batch size: {training_config.batch_size}")
+        print(f"   Learning rate: {training_config.learning_rate}")
+        print(f"\n💾 Output: {training_config.output_dir}")
+        
+        if training_config.dry_run:
+            print("\n⚠️  DRY RUN MODE - No actual training will occur")
+        
+        print("\n" + "=" * 60 + "\n")
         
         # Initialize model
         print("Initializing TIDE-Lite model...")
@@ -501,7 +280,8 @@ def main() -> int:
         return 130
     except Exception as e:
         print(f"Unexpected error: {e}", file=sys.stderr)
-        logger.exception("Training failed with exception")
+        import traceback
+        traceback.print_exc()
         return 1
 
 
