@@ -59,7 +59,9 @@ def _generate_synthetic_timestamps(
         Creates temporal clusters to simulate real-world data patterns
         where related content tends to appear in bursts.
     """
-    np.random.seed(seed)
+    # Ensure seed is in valid range for numpy
+    safe_seed = int(seed) % (2**32 - 1) if seed is not None else 42
+    np.random.seed(safe_seed)
     
     start = datetime.fromisoformat(start_date)
     end = datetime.fromisoformat(end_date)
@@ -113,11 +115,14 @@ def load_stsb_with_timestamps(cfg: DatasetConfig) -> DatasetDict:
         n_samples = len(dataset[split])
         
         # Generate correlated timestamps for sentence pairs
+        # Use a deterministic but valid seed for each split
+        split_seeds = {"train": 0, "validation": 1000, "test": 2000}
+        split_seed = (cfg.seed + split_seeds.get(split, 0)) % (2**32 - 1)
         base_timestamps = _generate_synthetic_timestamps(
             n_samples,
             cfg.timestamp_start,
             cfg.timestamp_end,
-            seed=cfg.seed + hash(split),
+            seed=split_seed,
             noise_std_days=cfg.temporal_noise_std,
         )
         
