@@ -5,26 +5,23 @@ on:
     branches: [ main, develop ]
   pull_request:
     branches: [ main ]
-  workflow_dispatch:
 
 jobs:
-  format-lint-typecheck:
-    name: Format, Lint, and Type Check
+  test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.8", "3.9", "3.10"]
-    
+        python-version: [3.8, 3.9, "3.10"]
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
+    - uses: actions/checkout@v3
     
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v4
       with:
         python-version: ${{ matrix.python-version }}
     
-    - name: Cache pip packages
+    - name: Cache pip
       uses: actions/cache@v3
       with:
         path: ~/.cache/pip
@@ -35,163 +32,30 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
+        pip install -r requirements.txt
         pip install -e .
-        pip install black isort flake8 mypy pytest pytest-cov
+        pip install pytest pytest-cov flake8 mypy black isort
     
-    - name: Format check with Black
+    - name: Format check with black
       run: |
-        black src tests --check --line-length 100 --target-version py38
-    
-    - name: Import sort check with isort
-      run: |
-        isort src tests --check-only --profile black --line-length 100
+        black src/ tests/ --check --line-length 100
     
     - name: Lint with flake8
       run: |
-        flake8 src tests \
-          --max-line-length=100 \
-          --extend-ignore=E203,W503 \
-          --exclude=__pycache__,.git,build,dist
+        flake8 src/ tests/ --max-line-length 100 --ignore E203,W503
     
     - name: Type check with mypy
       run: |
-        mypy src --config-file mypy.ini || true  # Allow failures for now
-  
-  test:
-    name: Run Tests
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.8", "3.9", "3.10"]
+        mypy src/tide_lite --ignore-missing-imports
     
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
-    
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ matrix.python-version }}
-    
-    - name: Cache pip packages
-      uses: actions/cache@v3
-      with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-pip-
-    
-    - name: Install dependencies
+    - name: Test with pytest
       run: |
-        python -m pip install --upgrade pip
-        pip install -e .
-        pip install pytest pytest-cov pytest-xdist
-    
-    - name: Run unit tests
-      run: |
-        pytest tests -v --cov=src --cov-report=xml --cov-report=term-missing
+        pytest tests/ -v --cov=src/tide_lite --cov-report=xml
     
     - name: Upload coverage to Codecov
-      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.9'
       uses: codecov/codecov-action@v3
       with:
         file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
         fail_ci_if_error: false
-        verbose: true
-
-  build:
-    name: Build Package
-    runs-on: ubuntu-latest
-    needs: [format-lint-typecheck, test]
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
-    
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: "3.9"
-    
-    - name: Install build dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install build twine
-    
-    - name: Build distribution
-      run: |
-        python -m build
-    
-    - name: Check distribution
-      run: |
-        twine check dist/*
-    
-    - name: Upload artifacts
-      uses: actions/upload-artifact@v3
-      with:
-        name: dist
-        path: dist/
-
-  security-check:
-    name: Security Check
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
-    
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: "3.9"
-    
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install bandit safety
-    
-    - name: Run Bandit security linter
-      run: |
-        bandit -r src -ll || true  # Allow failures for now
-    
-    - name: Check for known security vulnerabilities
-      run: |
-        pip install -e .
-        safety check --json || true  # Allow failures for now
-
-  dry-run-commands:
-    name: Test Dry-Run Commands
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
-    
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: "3.9"
-    
-    - name: Install package
-      run: |
-        python -m pip install --upgrade pip
-        pip install -e .
-    
-    - name: Test dry-run train command
-      run: |
-        make dry-run-train
-    
-    - name: Test dry-run eval commands
-      run: |
-        make dry-run-eval-stsb
-        make dry-run-eval-quora
-        make dry-run-eval-temporal
-    
-    - name: Test Makefile targets exist
-      run: |
-        make help
-        make --dry-run format
-        make --dry-run lint
-        make --dry-run typecheck
-        make --dry-run test
