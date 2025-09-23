@@ -14,6 +14,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers import AutoModel, AutoTokenizer, PreTrainedModel
 
+from ..utils.common import mean_pool, cls_pool, max_pool, sinusoidal_time_encoding
+
 logger = logging.getLogger(__name__)
 
 
@@ -53,24 +55,17 @@ def _pool_embeddings(hidden_states, attention_mask, strategy="mean"):
         Pooled embeddings [batch_size, hidden_dim]
     """
     if strategy == "cls":
-        return hidden_states[:, 0, :]
+        return cls_pool(hidden_states)
     elif strategy == "max":
-        # Mask out padding tokens with -inf
-        mask_expanded = attention_mask.unsqueeze(-1).expand(hidden_states.size())
-        hidden_states[~mask_expanded.bool()] = -1e9
-        return hidden_states.max(dim=1)[0]
+        return max_pool(hidden_states, attention_mask)
     else:  # mean
-        mask_expanded = attention_mask.unsqueeze(-1).expand(hidden_states.size())
-        sum_embeddings = (hidden_states * mask_expanded).sum(dim=1)
-        sum_mask = mask_expanded.sum(dim=1)
-        return sum_embeddings / sum_mask.clamp(min=1e-9)
+        return mean_pool(hidden_states, attention_mask)
 
 
 class SinusoidalTimeEncoding(nn.Module):
     """Sinusoidal position encoding adapted for timestamps.
     
-    Converts Unix timestamps into sinusoidal encodings similar to
-    positional encodings in Transformers, but for absolute time values.
+    Thin wrapper around sinusoidal_time_encoding utility for nn.Module compatibility.
     """
     
     def __init__(self, encoding_dim: int = 32) -> None:
@@ -87,11 +82,6 @@ class SinusoidalTimeEncoding(nn.Module):
             raise ValueError(f"encoding_dim must be even, got {encoding_dim}")
         
         self.encoding_dim = encoding_dim
-        
-        # Create fixed frequency scales (learnable=False for determinism)
-        scales = 2 ** torch.arange(encoding_dim // 2, dtype=torch.float32)
-        self.register_buffer("scales", scales)
-        
         logger.debug(f"Initialized sinusoidal time encoding with dim={encoding_dim}")
     
     def forward(self, timestamps: torch.Tensor) -> torch.Tensor:
@@ -103,24 +93,7 @@ class SinusoidalTimeEncoding(nn.Module):
         Returns:
             Time encodings [batch_size, encoding_dim].
         """
-        # Ensure timestamps have correct shape
-        if timestamps.dim() == 1:
-            timestamps = timestamps.unsqueeze(-1)
-        
-        # Convert to float32 to match model dtype
-        timestamps = timestamps.float()
-        
-        # Scale timestamps by different frequencies
-        scaled_time = timestamps / self.scales  # [batch_size, encoding_dim//2]
-        
-        # Apply sin and cos
-        sin_enc = torch.sin(scaled_time)
-        cos_enc = torch.cos(scaled_time)
-        
-        # Concatenate sin and cos encodings
-        encoding = torch.cat([sin_enc, cos_enc], dim=-1)
-        
-        return encoding
+        return sinusoidal_time_encoding(timestamps, dims=self.encoding_dim)
 
 
 

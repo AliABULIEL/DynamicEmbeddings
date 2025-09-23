@@ -15,9 +15,10 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Union
 
-import numpy as np
 import torch
 import yaml
+
+from .common import seed_everything
 
 logger = logging.getLogger(__name__)
 
@@ -338,22 +339,7 @@ def setup_logging(config: TIDEConfig) -> None:
     logger.info(f"Logging to file: {log_file}")
 
 
-def set_global_seed(seed: int) -> None:
-    """Set random seed for all libraries.
-    
-    Args:
-        seed: Random seed value.
-    """
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    
-    # Try to make CUDA operations deterministic
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-    
-    logger.info(f"Global random seed set to {seed}")
+
 
 
 def initialize_environment(config: TIDEConfig) -> None:
@@ -365,7 +351,7 @@ def initialize_environment(config: TIDEConfig) -> None:
         config: TIDE configuration.
     """
     setup_logging(config)
-    set_global_seed(config.seed)
+    seed_everything(config.seed)
     
     # Log configuration summary
     logger.info("="*60)

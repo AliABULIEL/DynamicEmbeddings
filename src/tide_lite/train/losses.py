@@ -11,6 +11,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from ..utils.common import cosine_similarity_matrix
+
 logger = logging.getLogger(__name__)
 
 
@@ -132,8 +134,7 @@ def temporal_consistency_loss(
     # Compute pairwise embedding similarities/distances
     if distance_metric == "cosine":
         # Cosine similarity (higher is more similar)
-        embeddings_norm = F.normalize(embeddings, p=2, dim=1)
-        embedding_sim = torch.matmul(embeddings_norm, embeddings_norm.T)
+        embedding_sim = cosine_similarity_matrix(embeddings)
         
         # Loss encourages high similarity when temporal weight is high
         # We want sim=1 when weight=1, sim=0 when weight=0

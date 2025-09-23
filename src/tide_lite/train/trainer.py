@@ -22,7 +22,8 @@ from tqdm import tqdm
 from ..data.collate import STSBCollator, TextBatcher
 from ..data.datasets import DatasetConfig, load_stsb_with_timestamps
 from ..models.tide_lite import TIDELite, TIDELiteConfig
-from ..utils.config import set_global_seed, setup_logging
+from ..utils.common import seed_everything
+from ..utils.config import setup_logging
 from .losses import combined_tide_loss, cosine_regression_loss, temporal_consistency_loss
 
 logger = logging.getLogger(__name__)
@@ -159,7 +160,7 @@ class TIDETrainer:
         setup_logging(config.log_level, log_file)
         
         # Set seed for reproducibility
-        set_global_seed(config.seed)
+        seed_everything(config.seed)
         
         # Move model to device
         if config.device:
