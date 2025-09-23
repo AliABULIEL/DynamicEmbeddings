@@ -1,12 +1,11 @@
-"""STS-B evaluation module for TIDE-Lite models.
+"""STS-B evaluation for TIDE-Lite and baseline models.
 
-This module evaluates models on the Semantic Textual Similarity Benchmark,
-computing Spearman correlation between predicted and gold similarity scores.
+This module evaluates models on the STS-B benchmark using
+Spearman's correlation with bootstrap confidence intervals.
 """
 
 import json
 import logging
-import time
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
@@ -15,13 +14,11 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from scipy.stats import spearmanr, pearsonr
-from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from ..data.collate import STSBCollator, TextBatcher
-from ..data.datasets import DatasetConfig, load_stsb_with_timestamps
 from ..models.tide_lite import TIDELite
-from ..models.baselines import BaselineEncoder
+from ..models.baselines import load_baseline
+from ..data.dataloaders import create_stsb_dataloaders
 
 logger = logging.getLogger(__name__)
 
@@ -31,394 +28,450 @@ class STSBMetrics:
     """Metrics for STS-B evaluation.
     
     Attributes:
-        spearman: Spearman correlation coefficient.
-        pearson: Pearson correlation coefficient.
+        spearman_rho: Spearman's rank correlation coefficient.
+        spearman_ci_lower: Lower bound of 95% CI for Spearman.
+        spearman_ci_upper: Upper bound of 95% CI for Spearman.
+        pearson_r: Pearson correlation coefficient.
+        pearson_ci_lower: Lower bound of 95% CI for Pearson.
+        pearson_ci_upper: Upper bound of 95% CI for Pearson.
         mse: Mean squared error.
-        mae: Mean absolute error.
-        num_samples: Number of evaluated samples.
-        avg_inference_time_ms: Average inference time per sample.
-        total_eval_time_s: Total evaluation time in seconds.
+        num_samples: Number of evaluation samples.
     """
-    spearman: float
-    pearson: float
+    spearman_rho: float
+    spearman_ci_lower: float
+    spearman_ci_upper: float
+    pearson_r: float
+    pearson_ci_lower: float
+    pearson_ci_upper: float
     mse: float
-    mae: float
     num_samples: int
-    avg_inference_time_ms: float
-    total_eval_time_s: float
+
+
+def bootstrap_confidence_interval(
+    predictions: np.ndarray,
+    gold_scores: np.ndarray,
+    metric_fn: callable,
+    n_bootstrap: int = 1000,
+    confidence: float = 0.95,
+    seed: int = 42,
+) -> Tuple[float, float, float]:
+    """Compute bootstrap confidence interval for a metric.
+    
+    Args:
+        predictions: Predicted similarity scores.
+        gold_scores: Gold standard scores.
+        metric_fn: Function to compute metric (e.g., spearmanr).
+        n_bootstrap: Number of bootstrap iterations.
+        confidence: Confidence level (default 0.95 for 95% CI).
+        seed: Random seed for reproducibility.
+        
+    Returns:
+        Tuple of (metric_value, ci_lower, ci_upper).
+    """
+    np.random.seed(seed)
+    n_samples = len(predictions)
+    
+    # Compute metric on original data
+    if metric_fn == spearmanr:
+        metric_value = metric_fn(predictions, gold_scores)[0]
+    elif metric_fn == pearsonr:
+        metric_value = metric_fn(predictions, gold_scores)[0]
+    else:
+        metric_value = metric_fn(predictions, gold_scores)
+    
+    # Bootstrap resampling
+    bootstrap_metrics = []
+    for _ in range(n_bootstrap):
+        # Resample with replacement
+        indices = np.random.choice(n_samples, size=n_samples, replace=True)
+        pred_sample = predictions[indices]
+        gold_sample = gold_scores[indices]
+        
+        # Compute metric on resampled data
+        try:
+            if metric_fn == spearmanr:
+                bootstrap_metric = metric_fn(pred_sample, gold_sample)[0]
+            elif metric_fn == pearsonr:
+                bootstrap_metric = metric_fn(pred_sample, gold_sample)[0]
+            else:
+                bootstrap_metric = metric_fn(pred_sample, gold_sample)
+            bootstrap_metrics.append(bootstrap_metric)
+        except:
+            # Handle edge cases where correlation can't be computed
+            continue
+    
+    # Compute confidence interval
+    bootstrap_metrics = np.array(bootstrap_metrics)
+    alpha = 1 - confidence
+    ci_lower = np.percentile(bootstrap_metrics, 100 * alpha / 2)
+    ci_upper = np.percentile(bootstrap_metrics, 100 * (1 - alpha / 2))
+    
+    return metric_value, ci_lower, ci_upper
 
 
 class STSBEvaluator:
-    """Evaluator for STS-B semantic similarity task.
-    
-    Computes cosine similarity between sentence pairs and correlates
-    with gold standard human similarity judgments.
-    """
+    """Evaluator for STS-B benchmark."""
     
     def __init__(
         self,
-        model: Union[TIDELite, BaselineEncoder],
-        device: Optional[torch.device] = None,
-        use_temporal: bool = True,
+        device: Optional[str] = None,
+        batch_size: int = 64,
+        max_seq_length: int = 128,
     ) -> None:
         """Initialize STS-B evaluator.
         
         Args:
-            model: Model to evaluate (TIDE-Lite or baseline).
-            device: Device for computation (auto-detect if None).
-            use_temporal: Whether to use temporal modulation for TIDE-Lite.
+            device: Device to use (auto-detect if None).
+            batch_size: Batch size for evaluation.
+            max_seq_length: Maximum sequence length.
         """
-        self.model = model
-        self.use_temporal = use_temporal and isinstance(model, TIDELite)
-        
-        # Setup device
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
-            self.device = device
+            self.device = torch.device(device)
         
-        self.model = self.model.to(self.device)
-        self.model.eval()
+        self.batch_size = batch_size
+        self.max_seq_length = max_seq_length
         
-        logger.info(
-            f"Initialized STS-B evaluator with model type: {type(model).__name__}, "
-            f"device: {self.device}, temporal: {self.use_temporal}"
-        )
+        logger.info(f"Initialized STSBEvaluator with device: {self.device}")
     
-    def prepare_dataloader(
+    def load_model(
         self,
-        split: str = "test",
-        batch_size: int = 64,
-        num_workers: int = 2,
-    ) -> DataLoader:
-        """Prepare STS-B dataloader for evaluation.
+        model_id_or_path: str,
+        model_type: str = "tide_lite",
+    ) -> Union[TIDELite, torch.nn.Module]:
+        """Load a model for evaluation.
         
         Args:
-            split: Dataset split ('validation' or 'test').
-            batch_size: Batch size for evaluation.
-            num_workers: DataLoader workers.
+            model_id_or_path: Model identifier or path to saved model.
+            model_type: Type of model ('tide_lite' or baseline name).
             
         Returns:
-            DataLoader for the specified split.
+            Loaded model.
         """
-        # Load dataset
-        dataset_config = DatasetConfig(
-            seed=42,
-            cache_dir="./data",
-            timestamp_start="2020-01-01",
-            timestamp_end="2024-01-01",
-        )
+        if model_type == "tide_lite":
+            # Load TIDE-Lite model
+            if Path(model_id_or_path).exists():
+                # Load from local path
+                model = TIDELite.from_pretrained(model_id_or_path)
+                logger.info(f"Loaded TIDE-Lite from {model_id_or_path}")
+            else:
+                # Initialize new model with encoder name
+                from ..models.tide_lite import TIDELiteConfig
+                config = TIDELiteConfig(encoder_name=model_id_or_path)
+                model = TIDELite(config)
+                logger.info(f"Initialized TIDE-Lite with encoder {model_id_or_path}")
+        else:
+            # Load baseline model
+            model = load_baseline(model_type)
+            logger.info(f"Loaded baseline model: {model_type}")
         
-        datasets = load_stsb_with_timestamps(dataset_config)
+        model.to(self.device)
+        model.eval()
         
-        if split not in datasets:
-            raise ValueError(f"Split '{split}' not found. Choose from: {list(datasets.keys())}")
-        
-        # Create tokenizer and collator
-        tokenizer = TextBatcher(
-            model_name=getattr(self.model, "config", None).encoder_name 
-            if hasattr(self.model, "config") else "sentence-transformers/all-MiniLM-L6-v2",
-            max_length=128,
-        )
-        
-        collator = STSBCollator(tokenizer, include_timestamps=self.use_temporal)
-        
-        # Create dataloader
-        dataloader = DataLoader(
-            datasets[split],
-            batch_size=batch_size,
-            shuffle=False,
-            collate_fn=collator,
-            num_workers=num_workers,
-            pin_memory=True,
-        )
-        
-        logger.info(f"Prepared STS-B {split} dataloader with {len(dataloader)} batches")
-        
-        return dataloader
+        return model
     
     @torch.no_grad()
-    def encode_sentences(
+    def compute_embeddings(
         self,
-        input_ids: torch.Tensor,
-        attention_mask: torch.Tensor,
-        timestamps: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        """Encode sentences to embeddings.
+        model: torch.nn.Module,
+        dataloader: torch.utils.data.DataLoader,
+        use_timestamps: bool = False,
+    ) -> Tuple[List[torch.Tensor], List[torch.Tensor], List[float]]:
+        """Compute embeddings for all samples in dataloader.
         
         Args:
-            input_ids: Token IDs [batch_size, seq_len].
-            attention_mask: Attention mask [batch_size, seq_len].
-            timestamps: Optional timestamps for temporal modulation.
+            model: Model to evaluate.
+            dataloader: DataLoader with STS-B samples.
+            use_timestamps: Whether to use temporal modulation (TIDE-Lite only).
             
         Returns:
-            Sentence embeddings [batch_size, hidden_dim].
+            Tuple of (embeddings1, embeddings2, gold_scores).
         """
-        if self.use_temporal and timestamps is not None:
-            # TIDE-Lite with temporal modulation
-            embeddings, _ = self.model(input_ids, attention_mask, timestamps)
-        elif hasattr(self.model, "encode_base"):
-            # TIDE-Lite without temporal modulation or baseline with encode_base
-            embeddings = self.model.encode_base(input_ids, attention_mask)
-        else:
-            # Generic forward pass
-            embeddings, _ = self.model(input_ids, attention_mask, timestamps)
+        all_emb1 = []
+        all_emb2 = []
+        all_scores = []
         
-        return embeddings
-    
-    def compute_similarities(
-        self,
-        embeddings1: torch.Tensor,
-        embeddings2: torch.Tensor,
-    ) -> torch.Tensor:
-        """Compute cosine similarities between embedding pairs.
-        
-        Args:
-            embeddings1: First set of embeddings [batch_size, hidden_dim].
-            embeddings2: Second set of embeddings [batch_size, hidden_dim].
-            
-        Returns:
-            Cosine similarities [batch_size].
-        """
-        # Normalize embeddings
-        embeddings1_norm = F.normalize(embeddings1, p=2, dim=1)
-        embeddings2_norm = F.normalize(embeddings2, p=2, dim=1)
-        
-        # Compute cosine similarity
-        similarities = torch.sum(embeddings1_norm * embeddings2_norm, dim=1)
-        
-        return similarities
-    
-    def evaluate(
-        self,
-        dataloader: Optional[DataLoader] = None,
-        split: str = "test",
-        batch_size: int = 64,
-    ) -> STSBMetrics:
-        """Evaluate model on STS-B dataset.
-        
-        Args:
-            dataloader: Optional pre-configured dataloader.
-            split: Dataset split if dataloader not provided.
-            batch_size: Batch size if dataloader not provided.
-            
-        Returns:
-            STSBMetrics with evaluation results.
-        """
-        if dataloader is None:
-            dataloader = self.prepare_dataloader(split, batch_size)
-        
-        logger.info(f"Starting STS-B evaluation on {split} split")
-        
-        all_predictions = []
-        all_gold_scores = []
-        inference_times = []
-        
-        start_time = time.time()
-        
-        for batch in tqdm(dataloader, desc="Evaluating STS-B"):
-            batch_start = time.perf_counter()
-            
+        for batch in tqdm(dataloader, desc="Computing embeddings"):
             # Move batch to device
             sent1_inputs = {k: v.to(self.device) for k, v in batch["sentence1_inputs"].items()}
             sent2_inputs = {k: v.to(self.device) for k, v in batch["sentence2_inputs"].items()}
             labels = batch["labels"]
             
-            # Get timestamps if available
-            timestamps1 = batch.get("timestamps1")
-            timestamps2 = batch.get("timestamps2")
+            # Generate timestamps if using temporal
+            if use_timestamps and isinstance(model, TIDELite):
+                batch_size = labels.shape[0]
+                timestamps1 = torch.rand(batch_size, device=self.device) * 1e9
+                timestamps2 = timestamps1 + torch.randn(batch_size, device=self.device) * 3600
+                
+                # Get temporal embeddings
+                emb1, _ = model(
+                    sent1_inputs["input_ids"],
+                    sent1_inputs["attention_mask"],
+                    timestamps1,
+                )
+                emb2, _ = model(
+                    sent2_inputs["input_ids"],
+                    sent2_inputs["attention_mask"],
+                    timestamps2,
+                )
+            else:
+                # Get base embeddings
+                if hasattr(model, 'encode_base'):
+                    emb1 = model.encode_base(
+                        sent1_inputs["input_ids"],
+                        sent1_inputs["attention_mask"],
+                    )
+                    emb2 = model.encode_base(
+                        sent2_inputs["input_ids"],
+                        sent2_inputs["attention_mask"],
+                    )
+                else:
+                    # For baseline models
+                    emb1, _ = model(
+                        sent1_inputs["input_ids"],
+                        sent1_inputs["attention_mask"],
+                    )
+                    emb2, _ = model(
+                        sent2_inputs["input_ids"],
+                        sent2_inputs["attention_mask"],
+                    )
             
-            if timestamps1 is not None:
-                timestamps1 = timestamps1.to(self.device)
-            if timestamps2 is not None:
-                timestamps2 = timestamps2.to(self.device)
-            
-            # Encode sentences
-            emb1 = self.encode_sentences(
-                sent1_inputs["input_ids"],
-                sent1_inputs["attention_mask"],
-                timestamps1,
-            )
-            emb2 = self.encode_sentences(
-                sent2_inputs["input_ids"],
-                sent2_inputs["attention_mask"],
-                timestamps2,
-            )
-            
-            # Compute similarities
-            similarities = self.compute_similarities(emb1, emb2)
-            
-            # Convert to [0, 5] scale
-            predictions = (similarities.cpu().numpy() + 1.0) * 2.5
-            
-            all_predictions.extend(predictions)
-            all_gold_scores.extend(labels.numpy())
-            
-            batch_time = (time.perf_counter() - batch_start) * 1000  # ms
-            inference_times.append(batch_time / len(labels))
+            all_emb1.append(emb1.cpu())
+            all_emb2.append(emb2.cpu())
+            all_scores.extend(labels.tolist())
         
-        total_time = time.time() - start_time
+        return all_emb1, all_emb2, all_scores
+    
+    def compute_metrics(
+        self,
+        embeddings1: List[torch.Tensor],
+        embeddings2: List[torch.Tensor],
+        gold_scores: List[float],
+        n_bootstrap: int = 1000,
+    ) -> STSBMetrics:
+        """Compute evaluation metrics with confidence intervals.
         
-        # Convert to numpy arrays
-        predictions = np.array(all_predictions)
-        gold_scores = np.array(all_gold_scores)
+        Args:
+            embeddings1: First set of embeddings.
+            embeddings2: Second set of embeddings.
+            gold_scores: Gold similarity scores [0, 5].
+            n_bootstrap: Number of bootstrap iterations.
+            
+        Returns:
+            STSBMetrics with all computed metrics.
+        """
+        # Concatenate all embeddings
+        emb1 = torch.cat(embeddings1, dim=0)
+        emb2 = torch.cat(embeddings2, dim=0)
+        gold_scores = np.array(gold_scores)
+        
+        # Normalize embeddings
+        emb1_norm = F.normalize(emb1, p=2, dim=1)
+        emb2_norm = F.normalize(emb2, p=2, dim=1)
+        
+        # Compute cosine similarities
+        cosine_sims = torch.sum(emb1_norm * emb2_norm, dim=1).numpy()
+        
+        # Scale predictions to [0, 5] for comparison
+        pred_scores = cosine_sims * 5.0
+        
+        # Compute Spearman correlation with bootstrap CI
+        spearman_rho, spearman_lower, spearman_upper = bootstrap_confidence_interval(
+            pred_scores,
+            gold_scores,
+            spearmanr,
+            n_bootstrap=n_bootstrap,
+        )
+        
+        # Compute Pearson correlation with bootstrap CI
+        pearson_r, pearson_lower, pearson_upper = bootstrap_confidence_interval(
+            pred_scores,
+            gold_scores,
+            pearsonr,
+            n_bootstrap=n_bootstrap,
+        )
+        
+        # Compute MSE
+        mse = np.mean((pred_scores - gold_scores) ** 2)
+        
+        return STSBMetrics(
+            spearman_rho=float(spearman_rho),
+            spearman_ci_lower=float(spearman_lower),
+            spearman_ci_upper=float(spearman_upper),
+            pearson_r=float(pearson_r),
+            pearson_ci_lower=float(pearson_lower),
+            pearson_ci_upper=float(pearson_upper),
+            mse=float(mse),
+            num_samples=len(gold_scores),
+        )
+    
+    def evaluate(
+        self,
+        model_id_or_path: str,
+        model_type: str = "tide_lite",
+        split: str = "test",
+        use_timestamps: bool = False,
+        n_bootstrap: int = 1000,
+        output_dir: Optional[str] = None,
+        save_results: bool = True,
+        dry_run: bool = False,
+    ) -> Dict[str, any]:
+        """Evaluate a model on STS-B.
+        
+        Args:
+            model_id_or_path: Model identifier or path.
+            model_type: Type of model.
+            split: Dataset split to evaluate on.
+            use_timestamps: Whether to use temporal modulation.
+            n_bootstrap: Number of bootstrap iterations for CI.
+            output_dir: Directory to save results.
+            save_results: Whether to save results to JSON.
+            dry_run: If True, just print plan without execution.
+            
+        Returns:
+            Dictionary with evaluation results.
+        """
+        if dry_run:
+            logger.info("[DRY RUN] Would evaluate model on STS-B:")
+            logger.info(f"  Model: {model_id_or_path}")
+            logger.info(f"  Type: {model_type}")
+            logger.info(f"  Split: {split}")
+            logger.info(f"  Temporal: {use_timestamps}")
+            logger.info(f"  Bootstrap iterations: {n_bootstrap}")
+            if save_results:
+                model_name = Path(model_id_or_path).name if "/" in model_id_or_path else model_id_or_path
+                output_file = f"results/metrics_stsb_{model_name}.json"
+                logger.info(f"  Would save to: {output_file}")
+            return {
+                "dry_run": True,
+                "model": model_id_or_path,
+                "split": split,
+            }
+        
+        # Load model
+        logger.info(f"Loading model: {model_id_or_path}")
+        model = self.load_model(model_id_or_path, model_type)
+        
+        # Load data
+        logger.info(f"Loading STS-B {split} split")
+        data_config = {
+            "cache_dir": "./data",
+            "seed": 42,
+            "model_name": model.config.encoder_name if hasattr(model, 'config') else model.model_name,
+        }
+        
+        train_loader, val_loader, test_loader = create_stsb_dataloaders(
+            cfg=data_config,
+            batch_size=self.batch_size,
+            eval_batch_size=self.batch_size,
+            max_seq_length=self.max_seq_length,
+            num_workers=2,
+        )
+        
+        # Select appropriate loader
+        if split == "train":
+            dataloader = train_loader
+        elif split == "validation":
+            dataloader = val_loader
+        else:
+            dataloader = test_loader
+        
+        # Compute embeddings
+        logger.info("Computing embeddings...")
+        embeddings1, embeddings2, gold_scores = self.compute_embeddings(
+            model, dataloader, use_timestamps
+        )
         
         # Compute metrics
-        spearman_corr, spearman_p = spearmanr(predictions, gold_scores)
-        pearson_corr, pearson_p = pearsonr(predictions, gold_scores)
-        mse = np.mean((predictions - gold_scores) ** 2)
-        mae = np.mean(np.abs(predictions - gold_scores))
-        
-        metrics = STSBMetrics(
-            spearman=float(spearman_corr),
-            pearson=float(pearson_corr),
-            mse=float(mse),
-            mae=float(mae),
-            num_samples=len(predictions),
-            avg_inference_time_ms=float(np.mean(inference_times)),
-            total_eval_time_s=total_time,
+        logger.info("Computing metrics with bootstrap CI...")
+        metrics = self.compute_metrics(
+            embeddings1, embeddings2, gold_scores, n_bootstrap
         )
         
-        logger.info(
-            f"STS-B evaluation complete - "
-            f"Spearman: {metrics.spearman:.4f}, "
-            f"Pearson: {metrics.pearson:.4f}, "
-            f"MSE: {metrics.mse:.4f}"
-        )
-        
-        return metrics
-    
-    def save_results(
-        self,
-        metrics: STSBMetrics,
-        output_dir: Union[str, Path],
-        model_name: str = "model",
-    ) -> Path:
-        """Save evaluation metrics to JSON file.
-        
-        Args:
-            metrics: Evaluation metrics.
-            output_dir: Directory to save results.
-            model_name: Model identifier for filename.
-            
-        Returns:
-            Path to saved metrics file.
-        """
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Create filename
-        metrics_file = output_dir / f"metrics_stsb_{model_name}.json"
-        
-        # Prepare metrics dict
-        metrics_dict = asdict(metrics)
-        metrics_dict["model_name"] = model_name
-        metrics_dict["task"] = "STS-B"
-        metrics_dict["use_temporal"] = self.use_temporal
-        
-        # Save to JSON
-        with open(metrics_file, "w") as f:
-            json.dump(metrics_dict, f, indent=2)
-        
-        logger.info(f"Saved STS-B metrics to {metrics_file}")
-        
-        return metrics_file
-    
-    def compare_with_baseline(
-        self,
-        baseline_model: BaselineEncoder,
-        dataloader: Optional[DataLoader] = None,
-    ) -> Dict[str, STSBMetrics]:
-        """Compare TIDE-Lite with baseline model.
-        
-        Args:
-            baseline_model: Baseline model for comparison.
-            dataloader: Optional shared dataloader.
-            
-        Returns:
-            Dictionary with metrics for both models.
-        """
-        logger.info("Evaluating TIDE-Lite model")
-        tide_metrics = self.evaluate(dataloader)
-        
-        logger.info("Evaluating baseline model")
-        baseline_evaluator = STSBEvaluator(
-            baseline_model,
-            device=self.device,
-            use_temporal=False,
-        )
-        baseline_metrics = baseline_evaluator.evaluate(dataloader)
-        
-        # Compute improvements
-        spearman_improvement = tide_metrics.spearman - baseline_metrics.spearman
-        pearson_improvement = tide_metrics.pearson - baseline_metrics.pearson
-        
-        logger.info(
-            f"Improvements over baseline - "
-            f"Spearman: {spearman_improvement:+.4f}, "
-            f"Pearson: {pearson_improvement:+.4f}"
-        )
-        
-        return {
-            "tide_lite": tide_metrics,
-            "baseline": baseline_metrics,
+        # Prepare results
+        results = {
+            "model": model_id_or_path,
+            "model_type": model_type,
+            "split": split,
+            "use_timestamps": use_timestamps,
+            "metrics": asdict(metrics),
+            "config": {
+                "batch_size": self.batch_size,
+                "max_seq_length": self.max_seq_length,
+                "n_bootstrap": n_bootstrap,
+            },
         }
+        
+        # Print results
+        logger.info("=" * 60)
+        logger.info("STS-B Evaluation Results")
+        logger.info("=" * 60)
+        logger.info(f"Model: {model_id_or_path}")
+        logger.info(f"Split: {split}")
+        logger.info(f"Samples: {metrics.num_samples}")
+        logger.info("-" * 40)
+        logger.info(f"Spearman ρ: {metrics.spearman_rho:.4f}")
+        logger.info(f"  95% CI: [{metrics.spearman_ci_lower:.4f}, {metrics.spearman_ci_upper:.4f}]")
+        logger.info(f"Pearson r: {metrics.pearson_r:.4f}")
+        logger.info(f"  95% CI: [{metrics.pearson_ci_lower:.4f}, {metrics.pearson_ci_upper:.4f}]")
+        logger.info(f"MSE: {metrics.mse:.4f}")
+        logger.info("=" * 60)
+        
+        # Save results
+        if save_results:
+            if output_dir is None:
+                output_dir = "results"
+            
+            output_path = Path(output_dir)
+            output_path.mkdir(parents=True, exist_ok=True)
+            
+            # Create filename based on model
+            model_name = Path(model_id_or_path).name if "/" in model_id_or_path else model_id_or_path
+            model_name = model_name.replace("/", "_")
+            output_file = output_path / f"metrics_stsb_{model_name}.json"
+            
+            with open(output_file, "w") as f:
+                json.dump(results, f, indent=2)
+            
+            logger.info(f"Results saved to: {output_file}")
+        
+        return results
 
 
-def load_model_for_evaluation(
-    model_path: Union[str, Path],
-    device: Optional[torch.device] = None,
-) -> Union[TIDELite, BaselineEncoder]:
-    """Load model from checkpoint or path.
+def evaluate_stsb(
+    model_id_or_path: str,
+    model_type: str = "tide_lite",
+    split: str = "test",
+    use_timestamps: bool = False,
+    n_bootstrap: int = 1000,
+    batch_size: int = 64,
+    output_dir: Optional[str] = None,
+    dry_run: bool = False,
+) -> Dict[str, any]:
+    """Convenience function to evaluate a model on STS-B.
     
     Args:
-        model_path: Path to model checkpoint or directory.
-        device: Device to load model on.
+        model_id_or_path: Model identifier or path.
+        model_type: Type of model.
+        split: Dataset split to evaluate on.
+        use_timestamps: Whether to use temporal modulation.
+        n_bootstrap: Number of bootstrap iterations.
+        batch_size: Batch size for evaluation.
+        output_dir: Directory to save results.
+        dry_run: If True, just print plan without execution.
         
     Returns:
-        Loaded model ready for evaluation.
-        
-    Raises:
-        FileNotFoundError: If model path doesn't exist.
-        RuntimeError: If model loading fails.
+        Dictionary with evaluation results.
     """
-    model_path = Path(model_path)
+    evaluator = STSBEvaluator(batch_size=batch_size)
     
-    if not model_path.exists():
-        raise FileNotFoundError(f"Model path not found: {model_path}")
-    
-    if device is None:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
-    try:
-        if model_path.is_dir():
-            # Load TIDE-Lite from directory
-            model = TIDELite.from_pretrained(str(model_path))
-        else:
-            # Load from checkpoint file
-            checkpoint = torch.load(model_path, map_location=device)
-            
-            # Reconstruct model from checkpoint
-            if "config" in checkpoint:
-                from ..models.tide_lite import TIDELiteConfig
-                config = TIDELiteConfig(**checkpoint["config"])
-                model = TIDELite(config)
-            else:
-                # Default config
-                model = TIDELite()
-            
-            # Load state dict
-            if "model_state_dict" in checkpoint:
-                model.load_state_dict(checkpoint["model_state_dict"])
-            else:
-                model.load_state_dict(checkpoint)
-        
-        model = model.to(device)
-        model.eval()
-        
-        logger.info(f"Loaded model from {model_path}")
-        
-        return model
-        
-    except Exception as e:
-        raise RuntimeError(f"Failed to load model from {model_path}: {e}")
+    return evaluator.evaluate(
+        model_id_or_path=model_id_or_path,
+        model_type=model_type,
+        split=split,
+        use_timestamps=use_timestamps,
+        n_bootstrap=n_bootstrap,
+        output_dir=output_dir,
+        dry_run=dry_run,
+    )
