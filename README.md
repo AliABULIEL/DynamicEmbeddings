@@ -8,6 +8,44 @@
 
 ## 🚀 Quickstart
 
+### Unified Orchestrator CLI
+
+TIDE-Lite provides a unified CLI that defaults to dry-run mode (shows plans without execution):
+
+```bash
+# Show help and available commands
+python -m tide_lite.cli.tide --help
+
+# Training (dry-run by default)
+python -m tide_lite.cli.tide train --output-dir results/run1
+
+# Actually execute with --run flag
+python -m tide_lite.cli.tide train --output-dir results/run1 --run
+
+# Evaluate on single benchmark
+python -m tide_lite.cli.tide eval-stsb --model results/run1/checkpoints/final.pt
+python -m tide_lite.cli.tide eval-quora --model results/run1/checkpoints/final.pt
+python -m tide_lite.cli.tide eval-temporal --model results/run1/checkpoints/final.pt
+
+# Benchmark all three evaluations at once
+python -m tide_lite.cli.tide bench-all --model results/run1/checkpoints/final.pt
+
+# Benchmark baselines
+python -m tide_lite.cli.tide bench-all --model minilm --type baseline
+python -m tide_lite.cli.tide bench-all --model e5-base --type baseline
+python -m tide_lite.cli.tide bench-all --model bge-base --type baseline
+
+# Run ablation study
+python -m tide_lite.cli.tide ablation \
+    --time-mlp-hidden 64,128,256 \
+    --consistency-weight 0.05,0.1,0.2 \
+    --time-encoding sinusoidal,learnable,none
+
+# Aggregate results and generate report
+python -m tide_lite.cli.tide aggregate --results-dir results/
+python -m tide_lite.cli.tide report --input results/summary.json
+```
+
 ### 1️⃣ CPU Smoke Test (2-5 min)
 ```bash
 # Clone and setup
@@ -19,17 +57,14 @@ python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
-# Run smoke test (tiny dataset, 1 epoch)
-python -m src.tide_lite.cli.train_cli \
-    --batch-size 16 \
-    --num-epochs 1 \
-    --dry-run \
-    --output-dir results/smoke_test
+# Run smoke test with unified CLI (dry-run mode)
+python -m tide_lite.cli.tide train --batch-size 16 --num-epochs 1
+
+# Actually run if dry-run looks good
+python -m tide_lite.cli.tide train --batch-size 16 --num-epochs 1 --run
 
 # Quick eval
-python -m src.tide_lite.cli.eval_stsb_cli \
-    --model-path results/smoke_test \
-    --dry-run
+python -m tide_lite.cli.tide eval-stsb --model results/*/checkpoints/final.pt
 
 # Generate plots
 python scripts/plot.py --dry-run
