@@ -1,164 +1,100 @@
 """Dataset loaders for TIDE-Lite experiments.
 
-This module provides loaders for STS-B with synthetic timestamps,
-Quora duplicate questions for retrieval, and a TimeQA-lite surrogate.
+This module provides loaders for real datasets:
+- STS-B for semantic textual similarity
+- Quora duplicate questions for retrieval
+- TimeQA/TempLAMA for temporal reasoning
 """
 
+import json
 import logging
-from dataclasses import dataclass
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple, Any, Union
+import os
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
-import numpy as np
 import pandas as pd
+import torch
 from datasets import Dataset, DatasetDict, load_dataset
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class DatasetConfig:
-    """Configuration for dataset loading.
-    
-    Attributes:
-        seed: Random seed for reproducibility.
-        max_samples: Maximum number of samples to load (None for all).
-        cache_dir: Directory for caching downloaded datasets.
-        timestamp_start: Start date for synthetic timestamps.
-        timestamp_end: End date for synthetic timestamps.
-        temporal_noise_std: Std dev for temporal noise in days.
-    """
-    seed: int = 42
-    max_samples: Optional[int] = None
-    cache_dir: str = "./data"
-    timestamp_start: str = "2020-01-01"
-    timestamp_end: str = "2024-01-01"
-    temporal_noise_std: float = 7.0  # Weekly noise
-
-
-def _generate_synthetic_timestamps(
-    n_samples: int,
-    start_date: str,
-    end_date: str,
-    seed: int = 42,
-    noise_std_days: float = 7.0,
-) -> np.ndarray:
-    """Generate synthetic timestamps with temporal clustering.
+def load_stsb(cfg: Dict) -> DatasetDict:
+    """Load STS-B dataset from GLUE benchmark.
     
     Args:
-        n_samples: Number of timestamps to generate.
-        start_date: ISO format start date.
-        end_date: ISO format end date.
-        seed: Random seed for reproducibility.
-        noise_std_days: Standard deviation for temporal noise in days.
+        cfg: Configuration dictionary with:
+            - cache_dir: Directory for caching datasets
+            - max_samples: Optional max samples per split
+            - seed: Random seed for sampling
         
     Returns:
-        Array of Unix timestamps in seconds.
-        
-    Note:
-        Creates temporal clusters to simulate real-world data patterns
-        where related content tends to appear in bursts.
-    """
-    # Ensure seed is in valid range for numpy
-    safe_seed = int(seed) % (2**32 - 1) if seed is not None else 42
-    np.random.seed(safe_seed)
-    
-    start = datetime.fromisoformat(start_date)
-    end = datetime.fromisoformat(end_date)
-    total_seconds = (end - start).total_seconds()
-    
-    # Create temporal clusters: 20% cluster centers, 80% around them
-    n_clusters = max(1, n_samples // 20)
-    cluster_centers = np.random.uniform(0, total_seconds, n_clusters)
-    
-    timestamps = []
-    for i in range(n_samples):
-        if i < n_clusters:
-            # Cluster center
-            ts = cluster_centers[i % n_clusters]
-        else:
-            # Sample around a random cluster center with Gaussian noise
-            center = cluster_centers[np.random.randint(n_clusters)]
-            noise = np.random.normal(0, noise_std_days * 86400)  # Convert days to seconds
-            ts = np.clip(center + noise, 0, total_seconds)
-        
-        timestamps.append(start.timestamp() + ts)
-    
-    return np.array(timestamps)
-
-
-def load_stsb_with_timestamps(cfg: DatasetConfig) -> DatasetDict:
-    """Load STS-B dataset with synthetic timestamps.
-    
-    Args:
-        cfg: Dataset configuration.
-        
-    Returns:
-        DatasetDict with train/validation/test splits, each containing:
+        DatasetDict with train/validation/test splits containing:
             - sentence1: First sentence
             - sentence2: Second sentence  
             - label: Similarity score [0, 5]
-            - timestamp1: Unix timestamp for sentence1
-            - timestamp2: Unix timestamp for sentence2
-            
-    Note:
-        Timestamps are synthetic and added for temporal consistency experiments.
-        Real-world usage should replace with actual temporal metadata.
     """
-    logger.info("Loading STS-B dataset with synthetic timestamps")
+    logger.info("Loading STS-B dataset from GLUE")
     
-    # Load base dataset
-    dataset = load_dataset("glue", "stsb", cache_dir=cfg.cache_dir)
+    cache_dir = cfg.get("cache_dir", "./data")
+    max_samples = cfg.get("max_samples", None)
+    seed = cfg.get("seed", 42)
     
-    # Add synthetic timestamps to each split
-    for split in ["train", "validation", "test"]:
-        n_samples = len(dataset[split])
-        
-        # Generate correlated timestamps for sentence pairs
-        # Use a deterministic but valid seed for each split
-        split_seeds = {"train": 0, "validation": 1000, "test": 2000}
-        split_seed = (cfg.seed + split_seeds.get(split, 0)) % (2**32 - 1)
-        base_timestamps = _generate_synthetic_timestamps(
-            n_samples,
-            cfg.timestamp_start,
-            cfg.timestamp_end,
-            seed=split_seed,
-            noise_std_days=cfg.temporal_noise_std,
-        )
-        
-        # Add small offset for second sentence (usually created near first)
-        offset = np.random.normal(0, 3600, n_samples)  # ±1 hour average
-        
-        dataset[split] = dataset[split].add_column("timestamp1", base_timestamps.tolist())
-        dataset[split] = dataset[split].add_column("timestamp2", (base_timestamps + offset).tolist())
-        
-        if cfg.max_samples and cfg.max_samples < n_samples:
-            dataset[split] = dataset[split].select(range(cfg.max_samples))
+    # Load from HuggingFace datasets
+    dataset = load_dataset(
+        "glue",
+        "stsb",
+        cache_dir=cache_dir
+    )
+    
+    # Apply sample limit if specified
+    if max_samples:
+        for split in ["train", "validation", "test"]:
+            n_samples = len(dataset[split])
+            if max_samples < n_samples:
+                # Use seed for reproducible sampling
+                dataset[split] = dataset[split].shuffle(seed=seed).select(range(max_samples))
+                logger.info(f"Limited {split} split to {max_samples} samples")
             
-        logger.info(f"Loaded {len(dataset[split])} STS-B {split} samples with timestamps")
+    # Log dataset sizes
+    for split in ["train", "validation", "test"]:
+        logger.info(f"STS-B {split}: {len(dataset[split])} samples")
     
     return dataset
 
 
-def load_quora(cfg: DatasetConfig) -> Tuple[Dataset, Dataset, Dataset]:
+def load_quora(cfg: Dict) -> Tuple[Dataset, Dataset, Dataset]:
     """Load Quora duplicate questions for retrieval evaluation.
     
+    Creates a retrieval setup where:
+    - Corpus: All unique questions
+    - Queries: Questions from duplicate pairs
+    - Relevance: Duplicate questions are relevant (score=1)
+    
     Args:
-        cfg: Dataset configuration.
+        cfg: Configuration dictionary with:
+            - cache_dir: Directory for caching
+            - max_samples: Optional max number of question pairs
+            - seed: Random seed for sampling
         
     Returns:
         Tuple of (corpus, queries, qrels):
             - corpus: Dataset with 'text' and 'doc_id'
             - queries: Dataset with 'text' and 'query_id'  
             - qrels: Dataset with 'query_id', 'doc_id', and 'relevance'
-            
-    Note:
-        Creates a retrieval setup from duplicate question pairs.
-        Positive pairs have relevance=1, negatives sampled randomly.
     """
     logger.info("Loading Quora duplicate questions dataset")
     
-    dataset = load_dataset("quora", cache_dir=cfg.cache_dir)["train"]
+    cache_dir = cfg.get("cache_dir", "./data")
+    max_samples = cfg.get("max_samples", None)
+    seed = cfg.get("seed", 42)
+    
+    # Load dataset
+    dataset = load_dataset(
+        "quora",
+        cache_dir=cache_dir,
+        split="train"
+    )
     
     # Filter out None questions
     dataset = dataset.filter(
@@ -166,34 +102,36 @@ def load_quora(cfg: DatasetConfig) -> Tuple[Dataset, Dataset, Dataset]:
         and x["questions"]["text"][1] is not None
     )
     
-    if cfg.max_samples:
-        dataset = dataset.select(range(min(cfg.max_samples, len(dataset))))
+    # Apply sample limit
+    if max_samples:
+        dataset = dataset.shuffle(seed=seed).select(range(min(max_samples, len(dataset))))
     
-    # Build corpus from unique questions
-    all_questions = []
-    seen = set()
+    # Build corpus from all unique questions
+    question_to_id = {}
+    corpus_texts = []
     
     for row in dataset:
         q1, q2 = row["questions"]["text"]
-        if q1 not in seen:
-            all_questions.append(q1)
-            seen.add(q1)
-        if q2 not in seen:
-            all_questions.append(q2)
-            seen.add(q2)
+        
+        if q1 not in question_to_id:
+            question_to_id[q1] = len(corpus_texts)
+            corpus_texts.append(q1)
+        
+        if q2 not in question_to_id:
+            question_to_id[q2] = len(corpus_texts)
+            corpus_texts.append(q2)
     
     corpus = Dataset.from_dict({
-        "text": all_questions,
-        "doc_id": list(range(len(all_questions))),
+        "text": corpus_texts,
+        "doc_id": list(range(len(corpus_texts))),
     })
     
-    # Create queries and relevance judgments from duplicate pairs
+    # Create queries and relevance judgments
     queries_list = []
     qrels_list = []
+    query_id = 0
     
-    question_to_id = {q: i for i, q in enumerate(all_questions)}
-    
-    for i, row in enumerate(dataset):
+    for row in dataset:
         if not row["is_duplicate"]:
             continue
             
@@ -201,129 +139,204 @@ def load_quora(cfg: DatasetConfig) -> Tuple[Dataset, Dataset, Dataset]:
         q1_id = question_to_id[q1]
         q2_id = question_to_id[q2]
         
-        # Use first as query, second as relevant doc
-        queries_list.append({"text": q1, "query_id": i})
-        qrels_list.append({"query_id": i, "doc_id": q2_id, "relevance": 1})
+        # Use q1 as query, q2 as relevant doc
+        queries_list.append({
+            "text": q1,
+            "query_id": query_id
+        })
+        qrels_list.append({
+            "query_id": query_id,
+            "doc_id": q2_id,
+            "relevance": 1.0
+        })
+        query_id += 1
+        
+        # Also use q2 as query, q1 as relevant doc (bidirectional)
+        queries_list.append({
+            "text": q2,
+            "query_id": query_id
+        })
+        qrels_list.append({
+            "query_id": query_id,
+            "doc_id": q1_id,
+            "relevance": 1.0
+        })
+        query_id += 1
     
     queries = Dataset.from_pandas(pd.DataFrame(queries_list))
     qrels = Dataset.from_pandas(pd.DataFrame(qrels_list))
     
-    logger.info(f"Created retrieval dataset: {len(corpus)} docs, {len(queries)} queries")
+    logger.info(f"Created Quora retrieval dataset:")
+    logger.info(f"  - Corpus: {len(corpus)} documents")
+    logger.info(f"  - Queries: {len(queries)} queries")
+    logger.info(f"  - Relevant pairs: {len(qrels)} judgments")
     
     return corpus, queries, qrels
 
 
-def load_timeqa_lite(cfg: DatasetConfig) -> Dataset:
-    """Load TimeQA-lite surrogate for temporal QA experiments.
+def load_timeqa(cfg: Dict) -> Dataset:
+    """Load TimeQA or TempLAMA dataset for temporal reasoning.
+    
+    First attempts to load TimeQA from specified directory.
+    Falls back to TempLAMA if TimeQA is not available.
     
     Args:
-        cfg: Dataset configuration.
+        cfg: Configuration dictionary with:
+            - timeqa_data_dir: Path to TimeQA dataset
+            - templama_path: Fallback path to TempLAMA
+            - cache_dir: General cache directory
+            - max_samples: Optional sample limit
+            - seed: Random seed
         
     Returns:
         Dataset with temporal QA examples:
             - question: Question text
             - context: Context paragraph  
             - answer: Answer text
-            - timestamp: Unix timestamp of the context
-            - temporal_expression: Extracted temporal phrase
-            
-    Note:
-        This is a PLACEHOLDER implementation using SQuAD with synthetic temporal markers.
-        For production, replace with actual TimeQA dataset:
-        ```python
-        # Actual TimeQA loading (when available):
-        from datasets import load_dataset
-        dataset = load_dataset("time_qa", cache_dir=cfg.cache_dir)
-        ```
-        
-    Warning:
-        This surrogate does NOT provide realistic temporal reasoning challenges.
-        It only adds superficial temporal markers for testing the pipeline.
+            - timestamp: Unix timestamp (if available)
     """
-    logger.warning(
-        "Using TimeQA-lite surrogate. For actual temporal reasoning evaluation, "
-        "replace with real TimeQA dataset when available."
-    )
+    logger.info("Loading temporal QA dataset")
     
-    # Use SQuAD as base and inject temporal context
-    squad = load_dataset("squad", cache_dir=cfg.cache_dir)["train"]
+    timeqa_dir = cfg.get("timeqa_data_dir", "./data/timeqa")
+    templama_dir = cfg.get("templama_path", "./data/templama")
+    cache_dir = cfg.get("cache_dir", "./data")
+    max_samples = cfg.get("max_samples", None)
+    seed = cfg.get("seed", 42)
     
-    if cfg.max_samples:
-        squad = squad.select(range(min(cfg.max_samples, len(squad))))
+    # Try loading TimeQA first
+    timeqa_path = Path(timeqa_dir)
+    if timeqa_path.exists() and (timeqa_path / "train.json").exists():
+        logger.info(f"Loading TimeQA from {timeqa_path}")
+        
+        # Load TimeQA format
+        train_file = timeqa_path / "train.json"
+        with open(train_file, 'r') as f:
+            data = json.load(f)
+        
+        # Convert to our format
+        examples = []
+        for item in data:
+            # TimeQA format typically has:
+            # - question, context, answer, timestamps
+            examples.append({
+                "question": item.get("question", ""),
+                "context": item.get("context", ""),
+                "answer": item.get("answer", item.get("answers", [""])[0] if isinstance(item.get("answers"), list) else ""),
+                "timestamp": item.get("timestamp", 0.0),
+            })
+        
+        dataset = Dataset.from_pandas(pd.DataFrame(examples))
+        
+        if max_samples and len(dataset) > max_samples:
+            dataset = dataset.shuffle(seed=seed).select(range(max_samples))
+        
+        logger.info(f"Loaded {len(dataset)} TimeQA examples")
+        return dataset
     
-    # Temporal expressions to inject
-    temporal_markers = [
-        "As of {date}",
-        "In {date}",
-        "During {date}",
-        "Since {date}",
-        "Before {date}",
-        "After {date}",
-        "By {date}",
-        "Until {date}",
+    # Fallback to TempLAMA
+    logger.info("TimeQA not found, falling back to TempLAMA")
+    logger.info("Note: TempLAMA provides temporal facts but not full QA pairs.")
+    logger.info("For production use, please download TimeQA dataset.")
+    
+    templama_path = Path(templama_dir)
+    
+    # Try to load TempLAMA
+    if templama_path.exists():
+        # TempLAMA typically has temporal facts in JSON format
+        train_file = templama_path / "train.jsonl"
+        if not train_file.exists():
+            train_file = templama_path / "data.jsonl"
+        
+        if train_file.exists():
+            logger.info(f"Loading TempLAMA from {train_file}")
+            
+            examples = []
+            with open(train_file, 'r') as f:
+                for line in f:
+                    item = json.loads(line)
+                    # Convert TempLAMA format to our QA format
+                    # TempLAMA typically has: subject, relation, object, time
+                    question = item.get("question", f"What is {item.get('relation', 'related to')} {item.get('subject', '')}?")
+                    answer = item.get("object", item.get("answer", ""))
+                    context = item.get("context", f"{item.get('subject', '')} {item.get('relation', '')} {answer}")
+                    
+                    examples.append({
+                        "question": question,
+                        "context": context,
+                        "answer": answer,
+                        "timestamp": item.get("time", 0.0) if isinstance(item.get("time"), (int, float)) else 0.0,
+                    })
+            
+            dataset = Dataset.from_pandas(pd.DataFrame(examples))
+            
+            if max_samples and len(dataset) > max_samples:
+                dataset = dataset.shuffle(seed=seed).select(range(max_samples))
+            
+            logger.info(f"Loaded {len(dataset)} TempLAMA examples")
+            return dataset
+    
+    # If neither dataset is available, provide instructions
+    logger.warning("=" * 60)
+    logger.warning("Neither TimeQA nor TempLAMA datasets found!")
+    logger.warning("")
+    logger.warning("To use TimeQA:")
+    logger.warning("1. Download TimeQA dataset from [official source]")
+    logger.warning(f"2. Extract to: {timeqa_dir}")
+    logger.warning("3. Ensure train.json exists in that directory")
+    logger.warning("")
+    logger.warning("To use TempLAMA (simpler alternative):")
+    logger.warning("1. Download TempLAMA from:")
+    logger.warning("   https://github.com/google-research/language/tree/master/language/templama")
+    logger.warning(f"2. Place data files in: {templama_dir}")
+    logger.warning("=" * 60)
+    
+    # Create minimal dummy dataset for pipeline testing
+    logger.warning("Creating minimal dummy dataset for testing only!")
+    
+    dummy_examples = [
+        {
+            "question": "When did the Berlin Wall fall?",
+            "context": "The Berlin Wall was a barrier that divided Berlin from 1961 to 1989.",
+            "answer": "1989",
+            "timestamp": 594691200.0,  # 1989 timestamp
+        },
+        {
+            "question": "Who was the president during the moon landing?",
+            "context": "Apollo 11 landed on the moon in July 1969 during Nixon's presidency.",
+            "answer": "Nixon",
+            "timestamp": -14182800.0,  # 1969 timestamp
+        },
     ]
     
-    # Generate timestamps and add temporal context
-    timestamps = _generate_synthetic_timestamps(
-        len(squad),
-        cfg.timestamp_start,
-        cfg.timestamp_end,
-        seed=cfg.seed,
-    )
-    
-    timeqa_examples = []
-    
-    for i, example in enumerate(squad):
-        # Skip if no answers
-        if not example["answers"]["text"]:
-            continue
-            
-        # Convert timestamp to date
-        ts = timestamps[i]
-        date = datetime.fromtimestamp(ts).strftime("%B %Y")
-        
-        # Inject temporal marker
-        marker = np.random.choice(temporal_markers)
-        temporal_expr = marker.format(date=date)
-        
-        # Modify context with temporal marker
-        context = f"{temporal_expr}, {example['context']}"
-        
-        timeqa_examples.append({
-            "question": example["question"],
-            "context": context,
-            "answer": example["answers"]["text"][0] if example["answers"]["text"] else "",
-            "timestamp": ts,
-            "temporal_expression": temporal_expr,
-        })
-    
-    dataset = Dataset.from_pandas(pd.DataFrame(timeqa_examples))
-    
-    logger.info(
-        f"Created TimeQA-lite surrogate with {len(dataset)} examples. "
-        "Note: This is NOT real temporal reasoning data."
-    )
+    dataset = Dataset.from_pandas(pd.DataFrame(dummy_examples))
+    logger.warning(f"Created {len(dataset)} dummy temporal examples")
     
     return dataset
 
 
-def verify_dataset_integrity(dataset: Union[Dataset, DatasetDict]) -> bool:
+def verify_dataset_integrity(dataset) -> bool:
     """Verify dataset has required fields and valid data.
     
     Args:
-        dataset: Dataset to verify.
+        dataset: Dataset to verify (Dataset or DatasetDict)
         
     Returns:
-        True if dataset is valid, raises ValueError otherwise.
+        True if valid
         
     Raises:
-        ValueError: If dataset is missing required fields or has invalid data.
+        ValueError: If dataset is invalid
     """
     if isinstance(dataset, DatasetDict):
         for split_name, split_data in dataset.items():
             if len(split_data) == 0:
                 raise ValueError(f"Empty dataset split: {split_name}")
             logger.debug(f"Verified {split_name} split with {len(split_data)} samples")
+    elif isinstance(dataset, tuple):
+        # For retrieval datasets (corpus, queries, qrels)
+        for i, component in enumerate(dataset):
+            if len(component) == 0:
+                raise ValueError(f"Empty dataset component {i}")
+        logger.debug(f"Verified retrieval dataset with {len(dataset[0])} docs")
     else:
         if len(dataset) == 0:
             raise ValueError("Empty dataset")

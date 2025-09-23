@@ -148,6 +148,77 @@ DynamicEmbeddings/
 
 ---
 
+## 📦 Datasets
+
+### Automatic Downloads
+
+STS-B and Quora datasets are automatically downloaded from HuggingFace Datasets:
+
+```python
+# These work out of the box:
+from src.tide_lite.data.datasets import load_stsb, load_quora
+
+# Load STS-B for similarity learning
+stsb = load_stsb({"cache_dir": "./data"})
+print(f"STS-B train: {len(stsb['train'])} samples")
+
+# Load Quora for retrieval evaluation
+corpus, queries, qrels = load_quora({"cache_dir": "./data"})
+print(f"Quora corpus: {len(corpus)} docs, {len(queries)} queries")
+```
+
+### Temporal Datasets (TimeQA/TempLAMA)
+
+For temporal reasoning evaluation, you can use either TimeQA or TempLAMA:
+
+#### Option 1: TimeQA (Recommended)
+```bash
+# Download TimeQA dataset
+mkdir -p ./data/timeqa
+cd ./data/timeqa
+# Download from official source and extract
+# Expected structure:
+# ./data/timeqa/
+#   ├── train.json
+#   ├── dev.json
+#   └── test.json
+```
+
+#### Option 2: TempLAMA (Simpler Alternative)
+```bash
+# Download TempLAMA
+mkdir -p ./data/templama
+cd ./data/templama
+wget https://github.com/google-research/language/raw/master/language/templama/data.jsonl
+# Or clone the full repo:
+# git clone https://github.com/google-research/language.git
+# cp language/language/templama/*.jsonl ./data/templama/
+```
+
+#### Configuration
+```yaml
+# In configs/defaults.yaml:
+timeqa_data_dir: "./data/timeqa"      # Primary: TimeQA
+templama_path: "./data/templama"      # Fallback: TempLAMA
+temporal_dataset: "templama"          # Which to prefer
+```
+
+The dataloader will:
+1. First try to load TimeQA from `timeqa_data_dir`
+2. Fall back to TempLAMA if TimeQA is not found
+3. Create minimal dummy data if neither exists (for testing only)
+
+### Dataset Sizes & Training Times
+
+| Dataset | Train Size | Test Size | Time/Epoch (GPU) |
+|---------|------------|-----------|------------------|
+| STS-B | 5,749 | 1,379 | ~30s |
+| Quora | ~400k pairs | ~100k | ~2min |
+| TimeQA | ~20k | ~5k | ~45s |
+| TempLAMA | ~50k facts | ~10k | ~1min |
+
+---
+
 ## 🎯 Training Your Own TIDE-Lite
 
 ### Basic Training

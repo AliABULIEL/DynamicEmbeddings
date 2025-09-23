@@ -1,14 +1,14 @@
 """Collation utilities for batching text data.
 
 This module provides collators for different task types:
-- STS-B similarity pairs with timestamps
+- STS-B similarity pairs
 - Retrieval corpus/query batching  
 - Temporal QA examples
 """
 
 import logging
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple, Any, Union
+from typing import Any, Dict, List, Union
 
 import torch
 from torch.nn.utils.rnn import pad_sequence
@@ -73,40 +73,45 @@ class TextBatcher:
 
 
 class STSBCollator:
-    """Collator for STS-B sentence pairs with temporal metadata.
+    """Collator for STS-B sentence pairs.
     
-    This collator handles sentence pairs with similarity scores and timestamps,
-    preparing them for temporal consistency training.
+    Handles sentence pairs with similarity scores for training
+    semantic textual similarity models.
     """
     
     def __init__(
         self,
-        tokenizer: TextBatcher,
-        include_timestamps: bool = True,
+        tokenizer: Union[TextBatcher, AutoTokenizer, str],
+        max_length: int = 128,
     ) -> None:
         """Initialize STS-B collator.
         
         Args:
-            tokenizer: TextBatcher instance for tokenization.
-            include_timestamps: Whether to include temporal information.
+            tokenizer: TextBatcher, tokenizer instance, or model name string.
+            max_length: Maximum sequence length.
         """
-        self.tokenizer = tokenizer
-        self.include_timestamps = include_timestamps
-        logger.info(f"Initialized STS-B collator (timestamps={include_timestamps})")
+        if isinstance(tokenizer, str):
+            self.tokenizer = TextBatcher(model_name=tokenizer, max_length=max_length)
+        elif isinstance(tokenizer, TextBatcher):
+            self.tokenizer = tokenizer
+        else:
+            # Assume it's a HF tokenizer
+            self.tokenizer = TextBatcher(max_length=max_length)
+            self.tokenizer.tokenizer = tokenizer
+        
+        logger.info("Initialized STS-B collator")
     
     def __call__(self, batch: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
         """Collate a batch of STS-B examples.
         
         Args:
-            batch: List of examples with sentence1, sentence2, label, timestamps.
+            batch: List of examples with sentence1, sentence2, label.
             
         Returns:
             Dictionary with:
-                - sentence1_inputs: Tokenized first sentences
-                - sentence2_inputs: Tokenized second sentences  
-                - labels: Similarity scores as tensor
-                - timestamps1: Unix timestamps for sentence1 (if enabled)
-                - timestamps2: Unix timestamps for sentence2 (if enabled)
+                - sentence1_inputs: Tokenized first sentences (input_ids, attention_mask)
+                - sentence2_inputs: Tokenized second sentences (input_ids, attention_mask)
+                - labels: Similarity scores as tensor [0, 5]
         """
         sentences1 = [item["sentence1"] for item in batch]
         sentences2 = [item["sentence2"] for item in batch]
@@ -116,44 +121,41 @@ class STSBCollator:
         sent1_encoding = self.tokenizer(sentences1, return_tensors="pt")
         sent2_encoding = self.tokenizer(sentences2, return_tensors="pt")
         
-        collated = {
+        return {
             "sentence1_inputs": sent1_encoding,
             "sentence2_inputs": sent2_encoding,
             "labels": labels,
         }
-        
-        if self.include_timestamps:
-            collated["timestamps1"] = torch.tensor(
-                [item["timestamp1"] for item in batch], 
-                dtype=torch.float32
-            )
-            collated["timestamps2"] = torch.tensor(
-                [item["timestamp2"] for item in batch],
-                dtype=torch.float32
-            )
-        
-        return collated
 
 
 class RetrievalCollator:
     """Collator for retrieval tasks with corpus and queries.
     
-    Handles separate batching for document corpus and queries,
+    Handles batching for document corpus and queries,
     optimized for efficient similarity search.
     """
     
     def __init__(
         self,
-        tokenizer: TextBatcher,
+        tokenizer: Union[TextBatcher, AutoTokenizer, str],
+        max_length: int = 128,
         is_corpus: bool = True,
     ) -> None:
         """Initialize retrieval collator.
         
         Args:
-            tokenizer: TextBatcher instance for tokenization.
+            tokenizer: TextBatcher, tokenizer instance, or model name string.
+            max_length: Maximum sequence length.
             is_corpus: True for corpus docs, False for queries.
         """
-        self.tokenizer = tokenizer
+        if isinstance(tokenizer, str):
+            self.tokenizer = TextBatcher(model_name=tokenizer, max_length=max_length)
+        elif isinstance(tokenizer, TextBatcher):
+            self.tokenizer = tokenizer
+        else:
+            self.tokenizer = TextBatcher(max_length=max_length)
+            self.tokenizer.tokenizer = tokenizer
+        
         self.is_corpus = is_corpus
         self.mode = "corpus" if is_corpus else "query"
         logger.info(f"Initialized retrieval collator for {self.mode}")
@@ -192,95 +194,93 @@ class RetrievalCollator:
 class TemporalQACollator:
     """Collator for temporal QA examples.
     
-    Handles question-context pairs with temporal metadata,
-    preparing them for temporal reasoning tasks.
+    Handles question-context pairs for temporal reasoning tasks,
+    including TimeQA and TempLAMA datasets.
     """
     
     def __init__(
         self,
-        tokenizer: TextBatcher,
+        tokenizer: Union[TextBatcher, AutoTokenizer, str],
         max_context_length: int = 384,
         max_question_length: int = 64,
     ) -> None:
         """Initialize temporal QA collator.
         
         Args:
-            tokenizer: TextBatcher instance for tokenization.
+            tokenizer: TextBatcher, tokenizer instance, or model name string.
             max_context_length: Maximum length for context.
             max_question_length: Maximum length for question.
         """
-        self.tokenizer = tokenizer
-        self.max_context_length = max_context_length
-        self.max_question_length = max_question_length
+        if isinstance(tokenizer, str):
+            # Create two batcher instances with different max lengths
+            self.question_tokenizer = TextBatcher(
+                model_name=tokenizer, 
+                max_length=max_question_length
+            )
+            self.context_tokenizer = TextBatcher(
+                model_name=tokenizer,
+                max_length=max_context_length
+            )
+        else:
+            # Use same tokenizer with different configs
+            base_tokenizer = tokenizer.tokenizer if isinstance(tokenizer, TextBatcher) else tokenizer
+            self.question_tokenizer = TextBatcher(max_length=max_question_length)
+            self.question_tokenizer.tokenizer = base_tokenizer
+            self.context_tokenizer = TextBatcher(max_length=max_context_length)
+            self.context_tokenizer.tokenizer = base_tokenizer
+        
         logger.info("Initialized temporal QA collator")
     
     def __call__(self, batch: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Collate a batch of temporal QA examples.
         
         Args:
-            batch: List of QA examples with question, context, answer, timestamp.
+            batch: List of QA examples with question, context, answer, optionally timestamp.
             
         Returns:
             Dictionary with:
                 - question_inputs: Tokenized questions
                 - context_inputs: Tokenized contexts  
-                - answers: Answer texts (not tokenized for flexibility)
-                - timestamps: Unix timestamps as tensor
-                - temporal_expressions: Temporal phrases (if available)
+                - answers: Answer texts (strings for flexibility)
+                - timestamps: Unix timestamps if available
         """
         questions = [item["question"] for item in batch]
         contexts = [item["context"] for item in batch]
         answers = [item.get("answer", "") for item in batch]
         
-        # Tokenize questions and contexts separately for better control
-        question_encoding = self.tokenizer(
-            questions,
-            return_tensors="pt",
-            max_length=self.max_question_length,
-            truncation=True,
-            padding="max_length",
-        )
-        
-        context_encoding = self.tokenizer(
-            contexts,
-            return_tensors="pt", 
-            max_length=self.max_context_length,
-            truncation=True,
-            padding="max_length",
-        )
-        
-        # Extract timestamps
-        timestamps = torch.tensor(
-            [item["timestamp"] for item in batch],
-            dtype=torch.float32
-        )
+        # Tokenize questions and contexts
+        question_encoding = self.question_tokenizer(questions, return_tensors="pt")
+        context_encoding = self.context_tokenizer(contexts, return_tensors="pt")
         
         collated = {
             "question_inputs": question_encoding,
             "context_inputs": context_encoding,
             "answers": answers,  # Keep as strings for flexibility
-            "timestamps": timestamps,
         }
         
-        # Include temporal expressions if available
-        if "temporal_expression" in batch[0]:
-            collated["temporal_expressions"] = [
-                item.get("temporal_expression", "") for item in batch
-            ]
+        # Include timestamps if available in the data
+        if "timestamp" in batch[0]:
+            timestamps = torch.tensor(
+                [item.get("timestamp", 0.0) for item in batch],
+                dtype=torch.float32
+            )
+            collated["timestamps"] = timestamps
         
         return collated
 
 
 def create_collator(
     task: str,
-    tokenizer: TextBatcher,
+    tokenizer: Union[str, TextBatcher, AutoTokenizer] = None,
+    max_length: int = 128,
     **kwargs: Any,
 ) -> Union[STSBCollator, RetrievalCollator, TemporalQACollator]:
     """Factory function to create appropriate collator for task.
     
     Args:
         task: Task name ('stsb', 'retrieval_corpus', 'retrieval_query', 'temporal_qa').
-        tokenizer: TextBatcher instance.
+        tokenizer: Model name, TextBatcher, or tokenizer instance.
+        max_length: Maximum sequence length.
         **kwargs: Additional arguments for specific collator.
         
     Returns:
@@ -291,40 +291,20 @@ def create_collator(
     """
     task_lower = task.lower()
     
+    # Default tokenizer if not provided
+    if tokenizer is None:
+        tokenizer = "sentence-transformers/all-MiniLM-L6-v2"
+    
     if task_lower == "stsb":
-        return STSBCollator(tokenizer, **kwargs)
+        return STSBCollator(tokenizer, max_length=max_length, **kwargs)
     elif task_lower == "retrieval_corpus":
-        return RetrievalCollator(tokenizer, is_corpus=True, **kwargs)
+        return RetrievalCollator(tokenizer, max_length=max_length, is_corpus=True, **kwargs)
     elif task_lower == "retrieval_query":
-        return RetrievalCollator(tokenizer, is_corpus=False, **kwargs)
-    elif task_lower in ["temporal_qa", "timeqa"]:
+        return RetrievalCollator(tokenizer, max_length=max_length, is_corpus=False, **kwargs)
+    elif task_lower in ["temporal_qa", "timeqa", "templama"]:
         return TemporalQACollator(tokenizer, **kwargs)
     else:
         raise ValueError(
             f"Unknown task: {task}. "
             f"Choose from: stsb, retrieval_corpus, retrieval_query, temporal_qa"
         )
-
-
-def pad_timestamps(
-    timestamps: List[torch.Tensor],
-    pad_value: float = 0.0,
-) -> torch.Tensor:
-    """Pad variable-length timestamp sequences.
-    
-    Args:
-        timestamps: List of timestamp tensors.
-        pad_value: Value to use for padding.
-        
-    Returns:
-        Padded timestamp tensor.
-    """
-    if not timestamps:
-        return torch.tensor([])
-    
-    if all(ts.dim() == 0 for ts in timestamps):
-        # Scalar timestamps, just stack
-        return torch.stack(timestamps)
-    else:
-        # Variable length sequences, pad
-        return pad_sequence(timestamps, batch_first=True, padding_value=pad_value)
