@@ -1,167 +1,169 @@
 # TIDE-Lite CLI Examples
 
-This document provides example commands for benchmarking TIDE-Lite against baselines using the unified orchestrator CLI.
+This document provides example commands for benchmarking and evaluation using the TIDE-Lite unified orchestrator CLI.
 
-## Important Note
+## Quick Reference
 
-All commands default to **dry-run mode** (show plan without executing). Add `--run` flag to actually execute.
+All commands default to **dry-run mode** (show plan only). Add `--run` flag to actually execute.
 
-## Baseline Benchmarks
+## Benchmarking Baselines
 
 ### MiniLM Baseline
 ```bash
-# Benchmark MiniLM on all three tasks (dry-run)
+# Dry-run (default) - shows execution plan
 python -m tide_lite.cli.tide bench-all --model minilm --type baseline
 
-# Actually execute
+# Actually execute with --run
 python -m tide_lite.cli.tide bench-all --model minilm --type baseline --run
 
-# Individual evaluations
-python -m tide_lite.cli.tide eval-stsb --model minilm --type baseline
-python -m tide_lite.cli.tide eval-quora --model minilm --type baseline --max-corpus 10000
-python -m tide_lite.cli.tide eval-temporal --model minilm --type baseline
+# With custom output directory
+python -m tide_lite.cli.tide bench-all --model minilm --type baseline \
+    --output-dir results/baselines/minilm --run
 ```
 
 ### E5-Base Baseline
 ```bash
-# Benchmark E5-Base on all three tasks
+# Dry-run (default) - shows execution plan
 python -m tide_lite.cli.tide bench-all --model e5-base --type baseline
+
+# Actually execute
+python -m tide_lite.cli.tide bench-all --model e5-base --type baseline --run
 
 # With custom output directory
 python -m tide_lite.cli.tide bench-all --model e5-base --type baseline \
-    --output-dir results/baselines/e5-base
+    --output-dir results/baselines/e5-base --run
 ```
 
 ### BGE-Base Baseline
 ```bash
-# Benchmark BGE-Base on all three tasks
+# Dry-run (default) - shows execution plan
 python -m tide_lite.cli.tide bench-all --model bge-base --type baseline
 
-# With limited data for quick testing
+# Actually execute
+python -m tide_lite.cli.tide bench-all --model bge-base --type baseline --run
+
+# With custom output directory
 python -m tide_lite.cli.tide bench-all --model bge-base --type baseline \
-    --max-corpus 1000 --max-queries 100
+    --output-dir results/baselines/bge-base --run
 ```
 
-## TIDE-Lite Benchmark
+## Benchmarking TIDE-Lite
 
-### Trained Model
+### Trained TIDE-Lite Checkpoint
 ```bash
-# Benchmark trained TIDE-Lite model
-python -m tide_lite.cli.tide bench-all \
-    --model results/run-20240315/checkpoints/best_model.pt \
-    --type tide_lite
+# Dry-run (default) - shows execution plan
+python -m tide_lite.cli.tide bench-all --model path/to/tide_checkpoint.pt
 
-# Or use path to checkpoint directory
+# Actually execute
+python -m tide_lite.cli.tide bench-all --model path/to/tide_checkpoint.pt --run
+
+# Example with specific checkpoint
 python -m tide_lite.cli.tide bench-all \
-    --model path/to/tide_checkpoint \
-    --type tide_lite
+    --model results/run-20240315-142530/checkpoints/best_model.pt \
+    --output-dir results/tide_lite_eval --run
 ```
 
-## Comparative Analysis
-
-### Run All Baselines + TIDE-Lite
-```bash
-#!/bin/bash
-# Script to benchmark all models
-
-# Output directory
-OUTPUT_DIR="results/benchmark-$(date +%Y%m%d)"
-
-# Run baselines
-for model in minilm e5-base bge-base; do
-    echo "Benchmarking $model..."
-    python -m tide_lite.cli.tide bench-all \
-        --model $model \
-        --type baseline \
-        --output-dir $OUTPUT_DIR \
-        --run
-done
-
-# Run TIDE-Lite
-echo "Benchmarking TIDE-Lite..."
-python -m tide_lite.cli.tide bench-all \
-    --model results/latest/checkpoints/best_model.pt \
-    --type tide_lite \
-    --output-dir $OUTPUT_DIR \
-    --run
-
-# Aggregate results
-python -m tide_lite.cli.tide aggregate \
-    --results-dir $OUTPUT_DIR \
-    --output $OUTPUT_DIR/summary.json \
-    --run
-
-# Generate report
-python -m tide_lite.cli.tide report \
-    --input $OUTPUT_DIR/summary.json \
-    --output-dir $OUTPUT_DIR/report \
-    --run
-```
-
-## Configuration Consistency
-
-All benchmarks use these consistent parameters:
-
-- **Tokenizer**: Model-specific (but same for each model across tasks)
-- **Max Sequence Length**: 128 tokens
-- **FAISS Index**: Flat (exact search)
-- **FAISS Params**: Same across all models
-- **Batch Size**: 128 for retrieval, 64 for others
-- **Pooling**: Mean pooling
-
-## Quick Test Commands
+## Complete Baseline Comparison
 
 ```bash
-# Quick smoke test with minimal data
-python -m tide_lite.cli.tide bench-all \
-    --model minilm \
-    --type baseline \
-    --max-corpus 100 \
-    --max-queries 10 \
-    --run
+# Run all baselines in sequence (dry-run)
+python -m tide_lite.cli.tide bench-all --model minilm --type baseline
+python -m tide_lite.cli.tide bench-all --model e5-base --type baseline
+python -m tide_lite.cli.tide bench-all --model bge-base --type baseline
 
-# Dry-run to see full execution plan
-python -m tide_lite.cli.tide bench-all \
-    --model minilm \
-    --type baseline
+# Run all baselines in sequence (actual execution)
+python -m tide_lite.cli.tide bench-all --model minilm --type baseline --run
+python -m tide_lite.cli.tide bench-all --model e5-base --type baseline --run
+python -m tide_lite.cli.tide bench-all --model bge-base --type baseline --run
+
+# Then aggregate results
+python -m tide_lite.cli.tide aggregate --results-dir results/ --run
+
+# Generate comparison report
+python -m tide_lite.cli.tide report --input results/summary.json --run
 ```
 
-## Expected Outputs
+## Individual Evaluations
 
-Each benchmark creates:
-- `results/metrics_stsb_<model>.json` - STS-B correlation metrics
-- `results/metrics_quora_<model>.json` - Retrieval metrics (nDCG, Recall, MRR)
-- `results/metrics_temporal_<model>.json` - Temporal understanding metrics
+### STS-B Only
+```bash
+# Baseline
+python -m tide_lite.cli.tide eval-stsb --model minilm --type baseline --run
 
-## Runtime Estimates
+# TIDE-Lite
+python -m tide_lite.cli.tide eval-stsb --model path/to/checkpoint.pt --run
+```
 
-On a typical GPU (e.g., V100, T4):
-- MiniLM baseline: ~5-10 minutes
-- E5-Base baseline: ~10-15 minutes
-- BGE-Base baseline: ~10-15 minutes
-- TIDE-Lite: ~5-10 minutes (similar to MiniLM)
+### Quora Retrieval Only
+```bash
+# Baseline with specific FAISS config
+python -m tide_lite.cli.tide eval-quora --model minilm --type baseline \
+    --index-type Flat --max-corpus 10000 --max-queries 1000 --run
 
-On CPU:
-- Multiply times by ~5-10x
+# TIDE-Lite
+python -m tide_lite.cli.tide eval-quora --model path/to/checkpoint.pt \
+    --index-type Flat --max-corpus 10000 --max-queries 1000 --run
+```
+
+### Temporal Evaluation Only
+```bash
+# Baseline
+python -m tide_lite.cli.tide eval-temporal --model minilm --type baseline \
+    --time-window-days 30 --run
+
+# TIDE-Lite
+python -m tide_lite.cli.tide eval-temporal --model path/to/checkpoint.pt \
+    --time-window-days 30 --run
+```
+
+## Consistent Parameters
+
+All evaluations use consistent parameters across models:
+- **Max sequence length**: 128 tokens
+- **FAISS index type**: Flat (exact search)
+- **Corpus size**: 10,000 documents (Quora)
+- **Query size**: 1,000 queries (Quora)
+- **Time window**: 30 days (Temporal)
+- **Batch size**: 128 (evaluation)
+
+## Output Structure
+
+Results are saved in JSON format:
+```
+results/
+├── metrics_stsb_<model>.json
+├── metrics_quora_<model>.json
+├── metrics_temporal_<model>.json
+├── summary.json            # Aggregated results
+├── summary.csv             # CSV format
+└── report.md              # Generated report
+```
 
 ## Troubleshooting
 
-If you encounter memory issues:
+### Out of Memory
+Reduce batch size in evaluation:
 ```bash
-# Reduce batch size
-export CUDA_VISIBLE_DEVICES=""  # Force CPU
-python -m tide_lite.cli.tide bench-all \
-    --model minilm \
-    --type baseline \
-    --max-corpus 1000 \
-    --run
+python -m tide_lite.cli.tide bench-all --model minilm --type baseline \
+    --batch-size 32 --run
 ```
 
-If FAISS is not installed:
+### FAISS Not Installed
+Install FAISS for retrieval evaluation:
 ```bash
 # CPU version
 pip install faiss-cpu
 
-# GPU version (requires CUDA)
+# GPU version (if CUDA available)
 pip install faiss-gpu
 ```
+
+### Missing Datasets
+Datasets are automatically downloaded on first use. Ensure internet connection and sufficient disk space (~2GB).
+
+## Notes
+
+- All commands show execution plan by default (dry-run mode)
+- Add `--run` flag to actually execute commands
+- Results are saved to `results/` by default (override with `--output-dir`)
+- Use `--help` on any command for detailed options
