@@ -5,10 +5,11 @@ as TIDE-Lite but without temporal modulation.
 """
 
 import logging
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from transformers import AutoModel, AutoTokenizer
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,7 @@ class BaselineEncoder(nn.Module):
         model_name: str,
         pooling_strategy: str = "mean",
         freeze: bool = True,
+        max_seq_length: int = 128,
     ) -> None:
         """Initialize baseline encoder.
         
@@ -33,14 +35,17 @@ class BaselineEncoder(nn.Module):
             model_name: HuggingFace model identifier.
             pooling_strategy: How to pool token embeddings ('mean', 'cls', 'max').
             freeze: Whether to freeze encoder parameters.
+            max_seq_length: Maximum sequence length for tokenization.
         """
         super().__init__()
         
         self.model_name = model_name
         self.pooling_strategy = pooling_strategy
+        self.max_seq_length = max_seq_length
         
-        # Load pre-trained model
+        # Load pre-trained model and tokenizer
         self.encoder = AutoModel.from_pretrained(model_name)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         
         # Get hidden dimension from config
         self.hidden_dim = self.encoder.config.hidden_size
@@ -52,6 +57,15 @@ class BaselineEncoder(nn.Module):
             logger.info(f"Initialized frozen baseline: {model_name}")
         else:
             logger.info(f"Initialized trainable baseline: {model_name}")
+    
+    @property
+    def embedding_dim(self) -> int:
+        """Get embedding dimension.
+        
+        Returns:
+            Embedding dimension.
+        """
+        return self.hidden_dim
     
     def pool_embeddings(
         self,
@@ -130,6 +144,55 @@ class BaselineEncoder(nn.Module):
         embeddings = self.encode_base(input_ids, attention_mask)
         return embeddings, embeddings  # Return twice for API compatibility
     
+    @torch.no_grad()
+    def encode_texts(
+        self,
+        texts: List[str],
+        batch_size: int = 32,
+        timestamps: Optional[List[float]] = None,
+    ) -> torch.Tensor:
+        """Encode text strings to embeddings (unified API).
+        
+        Args:
+            texts: List of text strings to encode.
+            batch_size: Batch size for encoding.
+            timestamps: Ignored for baseline models.
+            
+        Returns:
+            Embeddings tensor [num_texts, embedding_dim].
+        """
+        if timestamps is not None:
+            logger.debug("Baseline model ignoring timestamps in encode_texts")
+        
+        self.eval()
+        device = next(self.parameters()).device
+        all_embeddings = []
+        
+        # Process in batches
+        for i in range(0, len(texts), batch_size):
+            batch_texts = texts[i:i + batch_size]
+            
+            # Tokenize
+            inputs = self.tokenizer(
+                batch_texts,
+                padding=True,
+                truncation=True,
+                max_length=self.max_seq_length,
+                return_tensors="pt"
+            )
+            inputs = {k: v.to(device) for k, v in inputs.items()}
+            
+            # Forward pass
+            embeddings = self.encode_base(
+                inputs["input_ids"],
+                inputs["attention_mask"]
+            )
+            
+            all_embeddings.append(embeddings.cpu())
+        
+        # Concatenate all batches
+        return torch.cat(all_embeddings, dim=0)
+    
     def count_extra_parameters(self) -> int:
         """Count extra parameters (always 0 for frozen baselines).
         
@@ -153,95 +216,161 @@ class BaselineEncoder(nn.Module):
             "trainable_params": trainable,
             "frozen_params": total - trainable,
             "hidden_dim": self.hidden_dim,
+            "extra_params": trainable,  # For baseline, all trainable params are "extra"
         }
 
 
-def load_minilm_baseline(
-    pooling_strategy: str = "mean",
-    freeze: bool = True,
+class MiniLMBaseline(BaselineEncoder):
+    """All-MiniLM-L6-v2 baseline model.
+    
+    - Model: sentence-transformers/all-MiniLM-L6-v2
+    - Parameters: ~22M
+    - Hidden dimension: 384
+    - Max sequence length: 256 tokens
+    """
+    
+    def __init__(
+        self,
+        pooling_strategy: str = "mean",
+        freeze: bool = True,
+        max_seq_length: int = 128,
+    ) -> None:
+        """Initialize MiniLM baseline.
+        
+        Args:
+            pooling_strategy: Pooling method for token embeddings.
+            freeze: Whether to freeze encoder weights.
+            max_seq_length: Maximum sequence length for tokenization.
+        """
+        super().__init__(
+            model_name="sentence-transformers/all-MiniLM-L6-v2",
+            pooling_strategy=pooling_strategy,
+            freeze=freeze,
+            max_seq_length=max_seq_length,
+        )
+
+
+class E5BaseBaseline(BaselineEncoder):
+    """E5-base baseline model.
+    
+    - Model: intfloat/e5-base
+    - Parameters: ~110M
+    - Hidden dimension: 768
+    - Max sequence length: 512 tokens
+    - Requires 'query: ' and 'passage: ' prefixes for optimal performance
+    """
+    
+    def __init__(
+        self,
+        pooling_strategy: str = "mean",
+        freeze: bool = True,
+        max_seq_length: int = 128,
+        add_prefix: bool = True,
+    ) -> None:
+        """Initialize E5-base baseline.
+        
+        Args:
+            pooling_strategy: Pooling method for token embeddings.
+            freeze: Whether to freeze encoder weights.
+            max_seq_length: Maximum sequence length for tokenization.
+            add_prefix: Whether to add E5 prefixes to texts.
+        """
+        super().__init__(
+            model_name="intfloat/e5-base",
+            pooling_strategy=pooling_strategy,
+            freeze=freeze,
+            max_seq_length=max_seq_length,
+        )
+        self.add_prefix = add_prefix
+    
+    @torch.no_grad()
+    def encode_texts(
+        self,
+        texts: List[str],
+        batch_size: int = 32,
+        timestamps: Optional[List[float]] = None,
+    ) -> torch.Tensor:
+        """Encode text strings to embeddings with E5 prefixes.
+        
+        Args:
+            texts: List of text strings to encode.
+            batch_size: Batch size for encoding.
+            timestamps: Ignored for baseline models.
+            
+        Returns:
+            Embeddings tensor [num_texts, embedding_dim].
+        """
+        # Add E5 prefixes if enabled
+        if self.add_prefix:
+            texts = [f"query: {text}" for text in texts]
+        
+        return super().encode_texts(texts, batch_size, timestamps)
+
+
+class BGEBaseBaseline(BaselineEncoder):
+    """BGE-base baseline model.
+    
+    - Model: BAAI/bge-base-en-v1.5
+    - Parameters: ~109M
+    - Hidden dimension: 768
+    - Max sequence length: 512 tokens
+    - Optimized for retrieval tasks
+    """
+    
+    def __init__(
+        self,
+        pooling_strategy: str = "cls",  # BGE uses CLS pooling by default
+        freeze: bool = True,
+        max_seq_length: int = 128,
+    ) -> None:
+        """Initialize BGE-base baseline.
+        
+        Args:
+            pooling_strategy: Pooling method for token embeddings.
+            freeze: Whether to freeze encoder weights.
+            max_seq_length: Maximum sequence length for tokenization.
+        """
+        super().__init__(
+            model_name="BAAI/bge-base-en-v1.5",
+            pooling_strategy=pooling_strategy,
+            freeze=freeze,
+            max_seq_length=max_seq_length,
+        )
+
+
+def load_baseline(
+    model_type: str = "minilm",
+    **kwargs
 ) -> BaselineEncoder:
-    """Load all-MiniLM-L6-v2 baseline model.
+    """Factory function to load baseline models.
     
     Args:
-        pooling_strategy: Pooling method for token embeddings.
-        freeze: Whether to freeze encoder weights.
+        model_type: Type of baseline ('minilm', 'e5-base', 'bge-base').
+        **kwargs: Additional arguments for model initialization.
         
     Returns:
         Baseline encoder model.
         
-    Note:
-        - Model: sentence-transformers/all-MiniLM-L6-v2
-        - Parameters: ~22M
-        - Hidden dimension: 384
-        - Max sequence length: 256 tokens
+    Raises:
+        ValueError: If model_type is not recognized.
     """
-    return BaselineEncoder(
-        model_name="sentence-transformers/all-MiniLM-L6-v2",
-        pooling_strategy=pooling_strategy,
-        freeze=freeze,
-    )
-
-
-def load_e5_base_baseline(
-    pooling_strategy: str = "mean",
-    freeze: bool = True,
-) -> BaselineEncoder:
-    """Load E5-base baseline model.
+    model_type = model_type.lower()
     
-    Args:
-        pooling_strategy: Pooling method for token embeddings.
-        freeze: Whether to freeze encoder weights.
-        
-    Returns:
-        Baseline encoder model.
-        
-    Note:
-        - Model: intfloat/e5-base
-        - Parameters: ~110M
-        - Hidden dimension: 768
-        - Max sequence length: 512 tokens
-        - Requires 'query: ' and 'passage: ' prefixes for optimal performance
-    """
-    return BaselineEncoder(
-        model_name="intfloat/e5-base",
-        pooling_strategy=pooling_strategy,
-        freeze=freeze,
-    )
-
-
-def load_bge_base_baseline(
-    pooling_strategy: str = "cls",  # BGE uses CLS pooling by default
-    freeze: bool = True,
-) -> BaselineEncoder:
-    """Load BGE-base baseline model.
-    
-    Args:
-        pooling_strategy: Pooling method for token embeddings.
-        freeze: Whether to freeze encoder weights.
-        
-    Returns:
-        Baseline encoder model.
-        
-    Note:
-        - Model: BAAI/bge-base-en
-        - Parameters: ~109M
-        - Hidden dimension: 768
-        - Max sequence length: 512 tokens
-        - Optimized for retrieval tasks
-    """
-    return BaselineEncoder(
-        model_name="BAAI/bge-base-en",
-        pooling_strategy=pooling_strategy,
-        freeze=freeze,
-    )
+    if model_type == "minilm":
+        return MiniLMBaseline(**kwargs)
+    elif model_type in ["e5", "e5-base"]:
+        return E5BaseBaseline(**kwargs)
+    elif model_type in ["bge", "bge-base"]:
+        return BGEBaseBaseline(**kwargs)
+    else:
+        raise ValueError(
+            f"Unknown baseline model: {model_type}. "
+            f"Choose from: minilm, e5-base, bge-base"
+        )
 
 
 class BaselineComparison:
-    """Utility class for comparing baseline models.
-    
-    Provides methods to compare embeddings, performance, and efficiency
-    across different baseline encoders.
-    """
+    """Utility class for comparing baseline models."""
     
     def __init__(self) -> None:
         """Initialize comparison utility."""
@@ -276,14 +405,14 @@ class BaselineComparison:
     @torch.no_grad()
     def compare_embeddings(
         self,
-        input_ids: torch.Tensor,
-        attention_mask: torch.Tensor,
+        texts: List[str],
+        batch_size: int = 32,
     ) -> Dict[str, torch.Tensor]:
         """Generate embeddings from all models for comparison.
         
         Args:
-            input_ids: Token IDs [batch_size, seq_len].
-            attention_mask: Attention mask [batch_size, seq_len].
+            texts: List of text strings to encode.
+            batch_size: Batch size for encoding.
             
         Returns:
             Dictionary mapping model names to embeddings.
@@ -291,8 +420,7 @@ class BaselineComparison:
         embeddings = {}
         
         for name, model in self.models.items():
-            model.eval()
-            emb = model.encode_base(input_ids, attention_mask)
+            emb = model.encode_texts(texts, batch_size)
             embeddings[name] = emb
             logger.debug(f"Generated embeddings from {name}: shape {emb.shape}")
         
@@ -337,9 +465,9 @@ def create_baseline_suite() -> BaselineComparison:
     suite = BaselineComparison()
     
     # Add standard baselines
-    suite.add_model("minilm", load_minilm_baseline())
-    suite.add_model("e5-base", load_e5_base_baseline())
-    suite.add_model("bge-base", load_bge_base_baseline())
+    suite.add_model("minilm", MiniLMBaseline())
+    suite.add_model("e5-base", E5BaseBaseline())
+    suite.add_model("bge-base", BGEBaseBaseline())
     
     logger.info("Created baseline suite with 3 models")
     

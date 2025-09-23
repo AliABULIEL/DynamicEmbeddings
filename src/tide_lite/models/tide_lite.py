@@ -5,16 +5,13 @@ and lightweight temporal modulation via MLP-based gating.
 """
 
 import logging
-import time
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import AutoModel, AutoTokenizer, PreTrainedModel
-
-from ..utils.common import mean_pool, cls_pool, max_pool, sinusoidal_time_encoding
+from transformers import AutoModel, AutoTokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +29,7 @@ class TIDELiteConfig:
         gate_activation: Activation function for gating ('sigmoid' or 'tanh').
         freeze_encoder: Whether to freeze encoder parameters.
         pooling_strategy: How to pool encoder outputs ('mean', 'cls', 'max').
+        max_seq_length: Maximum sequence length for tokenization.
     """
     encoder_name: str = "sentence-transformers/all-MiniLM-L6-v2"
     hidden_dim: int = 384
@@ -41,70 +39,60 @@ class TIDELiteConfig:
     gate_activation: str = "sigmoid"
     freeze_encoder: bool = True
     pooling_strategy: str = "mean"
-
-
-def _pool_embeddings(hidden_states, attention_mask, strategy="mean"):
-    """Pool token embeddings based on strategy.
-    
-    Args:
-        hidden_states: Token embeddings [batch_size, seq_len, hidden_dim]
-        attention_mask: Attention mask [batch_size, seq_len]
-        strategy: Pooling strategy ("mean", "cls", "max")
-    
-    Returns:
-        Pooled embeddings [batch_size, hidden_dim]
-    """
-    if strategy == "cls":
-        return cls_pool(hidden_states)
-    elif strategy == "max":
-        return max_pool(hidden_states, attention_mask)
-    else:  # mean
-        return mean_pool(hidden_states, attention_mask)
+    max_seq_length: int = 128
 
 
 class SinusoidalTimeEncoding(nn.Module):
-    """Sinusoidal position encoding adapted for timestamps.
-    
-    Thin wrapper around sinusoidal_time_encoding utility for nn.Module compatibility.
-    """
+    """Sinusoidal position encoding adapted for timestamps."""
     
     def __init__(self, encoding_dim: int = 32) -> None:
         """Initialize time encoding.
         
         Args:
             encoding_dim: Dimension of output encoding (must be even).
-            
-        Raises:
-            ValueError: If encoding_dim is odd.
         """
         super().__init__()
         if encoding_dim % 2 != 0:
             raise ValueError(f"encoding_dim must be even, got {encoding_dim}")
         
         self.encoding_dim = encoding_dim
-        logger.debug(f"Initialized sinusoidal time encoding with dim={encoding_dim}")
     
     def forward(self, timestamps: torch.Tensor) -> torch.Tensor:
         """Encode timestamps into sinusoidal features.
         
         Args:
-            timestamps: Unix timestamps [batch_size, 1] or [batch_size].
+            timestamps: Unix timestamps [batch_size].
             
         Returns:
             Time encodings [batch_size, encoding_dim].
         """
-        return sinusoidal_time_encoding(timestamps, dims=self.encoding_dim)
-
-
-
+        batch_size = timestamps.shape[0]
+        device = timestamps.device
+        
+        # Ensure timestamps are 1D
+        if timestamps.dim() > 1:
+            timestamps = timestamps.squeeze()
+        
+        # Create position indices for encoding dimensions
+        dim_indices = torch.arange(0, self.encoding_dim, 2, device=device).float()
+        
+        # Compute frequency scaling factors
+        div_term = torch.exp(dim_indices * -(torch.log(torch.tensor(10000.0)) / self.encoding_dim))
+        
+        # Expand for batch processing
+        timestamps = timestamps.unsqueeze(1)
+        div_term = div_term.unsqueeze(0)
+        
+        # Compute sinusoidal encodings
+        encodings = torch.zeros(batch_size, self.encoding_dim, device=device)
+        encodings[:, 0::2] = torch.sin(timestamps * div_term)
+        encodings[:, 1::2] = torch.cos(timestamps * div_term)
+        
+        return encodings
 
 
 class TemporalGatingMLP(nn.Module):
-    """MLP that generates gating values from temporal encodings.
-    
-    This module learns to modulate embeddings based on temporal context,
-    producing element-wise gates that adjust the frozen encoder outputs.
-    """
+    """MLP that generates gating values from temporal encodings."""
     
     def __init__(
         self,
@@ -146,11 +134,6 @@ class TemporalGatingMLP(nn.Module):
                 nn.init.normal_(module.weight, mean=0.0, std=0.02)
                 if module.bias is not None:
                     nn.init.constant_(module.bias, 0.0)
-        
-        logger.debug(
-            f"Initialized temporal MLP: {input_dim} → {hidden_dim} → {output_dim} "
-            f"with {activation} activation"
-        )
     
     def forward(self, time_encoding: torch.Tensor) -> torch.Tensor:
         """Generate gating values from time encoding.
@@ -169,16 +152,12 @@ class TemporalGatingMLP(nn.Module):
 class TIDELite(nn.Module):
     """TIDE-Lite model with frozen encoder and temporal modulation.
     
-    This model combines a frozen pre-trained encoder with a lightweight
-    temporal modulation mechanism that adjusts embeddings based on timestamps.
-    
-    The architecture:
+    Architecture:
     1. Frozen encoder produces base embeddings
-    2. Timestamps are encoded via sinusoidal functions
-    3. Temporal MLP generates element-wise gates
-    4. Gates modulate base embeddings via Hadamard product
-    
-    Total extra parameters: ~53K (for default configuration)
+    2. Mean pooling over token embeddings
+    3. Timestamps encoded via sinusoidal functions
+    4. Temporal MLP generates element-wise gates (Sigmoid)
+    5. Hadamard product modulates base embeddings
     """
     
     def __init__(self, config: Optional[TIDELiteConfig] = None) -> None:
@@ -191,8 +170,12 @@ class TIDELite(nn.Module):
         
         self.config = config or TIDELiteConfig()
         
-        # Load pre-trained encoder
+        # Load pre-trained encoder and tokenizer
         self.encoder = AutoModel.from_pretrained(self.config.encoder_name)
+        self.tokenizer = AutoTokenizer.from_pretrained(self.config.encoder_name)
+        
+        # Update hidden_dim from actual model
+        self.config.hidden_dim = self.encoder.config.hidden_size
         
         # Freeze encoder if specified
         if self.config.freeze_encoder:
@@ -210,13 +193,50 @@ class TIDELite(nn.Module):
             activation=self.config.gate_activation,
         )
         
-        # Latency tracking (for profiling without execution)
-        self._forward_times = []
-        self._encode_times = []
-        
         logger.info(
             f"Initialized TIDE-Lite with {self.count_extra_parameters():,} extra parameters"
         )
+    
+    @property
+    def embedding_dim(self) -> int:
+        """Get embedding dimension.
+        
+        Returns:
+            Embedding dimension.
+        """
+        return self.config.hidden_dim
+    
+    def pool_embeddings(
+        self,
+        token_embeddings: torch.Tensor,
+        attention_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """Pool token embeddings based on strategy.
+        
+        Args:
+            token_embeddings: Token-level embeddings [batch, seq_len, hidden_dim].
+            attention_mask: Attention mask [batch, seq_len].
+            
+        Returns:
+            Pooled embeddings [batch, hidden_dim].
+        """
+        if self.config.pooling_strategy == "mean":
+            # Mean pooling with proper masking
+            input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size())
+            embeddings = torch.sum(token_embeddings * input_mask_expanded, 1)
+            embeddings = embeddings / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
+        elif self.config.pooling_strategy == "cls":
+            # Use [CLS] token
+            embeddings = token_embeddings[:, 0]
+        elif self.config.pooling_strategy == "max":
+            # Max pooling with masking
+            token_embeddings = token_embeddings.clone()
+            token_embeddings[attention_mask == 0] = -1e9
+            embeddings, _ = torch.max(token_embeddings, dim=1)
+        else:
+            raise ValueError(f"Unknown pooling strategy: {self.config.pooling_strategy}")
+        
+        return embeddings
     
     def encode_base(
         self,
@@ -232,43 +252,21 @@ class TIDELite(nn.Module):
         Returns:
             Base embeddings [batch_size, hidden_dim].
         """
-        start_time = time.perf_counter()
-        
-        # Get encoder outputs
         with torch.no_grad() if self.config.freeze_encoder else torch.enable_grad():
             outputs = self.encoder(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
             )
         
-        # Pool based on strategy
-        if self.config.pooling_strategy == "mean":
-            # Mean pooling over sequence dimension
-            token_embeddings = outputs.last_hidden_state
-            input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size())
-            embeddings = torch.sum(token_embeddings * input_mask_expanded, 1)
-            embeddings = embeddings / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
-        elif self.config.pooling_strategy == "cls":
-            # Use [CLS] token
-            embeddings = outputs.last_hidden_state[:, 0]
-        elif self.config.pooling_strategy == "max":
-            # Max pooling
-            token_embeddings = outputs.last_hidden_state
-            # Set padding tokens to large negative value
-            token_embeddings[attention_mask == 0] = -1e9
-            embeddings, _ = torch.max(token_embeddings, dim=1)
-        else:
-            raise ValueError(f"Unknown pooling strategy: {self.config.pooling_strategy}")
-        
-        self._encode_times.append(time.perf_counter() - start_time)
-        
+        # Pool embeddings
+        embeddings = self.pool_embeddings(outputs.last_hidden_state, attention_mask)
         return embeddings
     
     def forward(
         self,
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor,
-        timestamps: torch.Tensor,
+        timestamps: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Forward pass with temporal modulation.
         
@@ -282,10 +280,12 @@ class TIDELite(nn.Module):
                 - Temporally modulated embeddings [batch_size, hidden_dim]
                 - Base embeddings without modulation [batch_size, hidden_dim]
         """
-        start_time = time.perf_counter()
-        
         # Get base embeddings
         base_embeddings = self.encode_base(input_ids, attention_mask)
+        
+        if timestamps is None:
+            # No temporal modulation
+            return base_embeddings, base_embeddings
         
         # Encode timestamps
         time_encoding = self.time_encoder(timestamps)
@@ -296,9 +296,69 @@ class TIDELite(nn.Module):
         # Apply gating via Hadamard product
         temporal_embeddings = base_embeddings * gates
         
-        self._forward_times.append(time.perf_counter() - start_time)
-        
         return temporal_embeddings, base_embeddings
+    
+    @torch.no_grad()
+    def encode_texts(
+        self,
+        texts: List[str],
+        batch_size: int = 32,
+        timestamps: Optional[List[float]] = None,
+    ) -> torch.Tensor:
+        """Encode text strings to embeddings (unified API).
+        
+        Args:
+            texts: List of text strings to encode.
+            batch_size: Batch size for encoding.
+            timestamps: Optional list of Unix timestamps for temporal modulation.
+            
+        Returns:
+            Embeddings tensor [num_texts, embedding_dim].
+        """
+        self.eval()
+        device = next(self.parameters()).device
+        all_embeddings = []
+        
+        # Process in batches
+        for i in range(0, len(texts), batch_size):
+            batch_texts = texts[i:i + batch_size]
+            
+            # Tokenize
+            inputs = self.tokenizer(
+                batch_texts,
+                padding=True,
+                truncation=True,
+                max_length=self.config.max_seq_length,
+                return_tensors="pt"
+            )
+            inputs = {k: v.to(device) for k, v in inputs.items()}
+            
+            # Prepare timestamps if provided
+            batch_timestamps = None
+            if timestamps is not None:
+                batch_timestamps = torch.tensor(
+                    timestamps[i:i + batch_size],
+                    dtype=torch.float32,
+                    device=device
+                )
+            
+            # Forward pass
+            if batch_timestamps is not None:
+                embeddings, _ = self.forward(
+                    inputs["input_ids"],
+                    inputs["attention_mask"],
+                    batch_timestamps
+                )
+            else:
+                embeddings = self.encode_base(
+                    inputs["input_ids"],
+                    inputs["attention_mask"]
+                )
+            
+            all_embeddings.append(embeddings.cpu())
+        
+        # Concatenate all batches
+        return torch.cat(all_embeddings, dim=0)
     
     def count_extra_parameters(self) -> int:
         """Count only the trainable parameters added by TIDE-Lite.
@@ -309,10 +369,9 @@ class TIDELite(nn.Module):
         extra_params = 0
         
         # Count temporal MLP parameters only
-        for module in [self.temporal_gate]:
-            for param in module.parameters():
-                if param.requires_grad:
-                    extra_params += param.numel()
+        for param in self.temporal_gate.parameters():
+            if param.requires_grad:
+                extra_params += param.numel()
         
         return extra_params
     
@@ -334,104 +393,6 @@ class TIDELite(nn.Module):
         }
         
         return summary
-    
-    def estimate_latency(self, batch_size: int = 32, seq_len: int = 128) -> Dict[str, float]:
-        """Estimate latency based on recorded times (without execution).
-        
-        Args:
-            batch_size: Batch size for estimation.
-            seq_len: Sequence length for estimation.
-            
-        Returns:
-            Dictionary with latency estimates in milliseconds.
-            
-        Note:
-            This returns mock estimates when no actual timing data is available.
-            In production, these would be populated from actual forward passes.
-        """
-        if not self._forward_times:
-            # Return reasonable estimates based on model size
-            base_latency = 8.0  # ms for MiniLM
-            mlp_overhead = 2.0  # ms for temporal MLP
-            
-            return {
-                "base_encoding_ms": base_latency,
-                "temporal_modulation_ms": mlp_overhead,
-                "total_forward_ms": base_latency + mlp_overhead,
-                "throughput_samples_per_sec": 1000 * batch_size / (base_latency + mlp_overhead),
-            }
-        
-        # Calculate statistics from recorded times
-        avg_forward = sum(self._forward_times) / len(self._forward_times) * 1000
-        avg_encode = sum(self._encode_times) / len(self._encode_times) * 1000 if self._encode_times else 0
-        
-        return {
-            "base_encoding_ms": avg_encode,
-            "temporal_modulation_ms": avg_forward - avg_encode,
-            "total_forward_ms": avg_forward,
-            "throughput_samples_per_sec": 1000 * batch_size / avg_forward,
-        }
-    
-    def reset_timing_stats(self) -> None:
-        """Reset internal timing statistics."""
-        self._forward_times = []
-        self._encode_times = []
-        logger.debug("Reset timing statistics")
-    
-    @torch.no_grad()
-    def encode_batch(
-        self,
-        input_ids: torch.Tensor,
-        attention_mask: torch.Tensor,
-        timestamps: Optional[torch.Tensor] = None,
-        use_temporal: bool = True,
-    ) -> torch.Tensor:
-        """Encode a batch for inference (no gradient tracking).
-        
-        Args:
-            input_ids: Token IDs [batch_size, seq_len].
-            attention_mask: Attention mask [batch_size, seq_len].
-            timestamps: Optional timestamps [batch_size].
-            use_temporal: Whether to apply temporal modulation.
-            
-        Returns:
-            Embeddings [batch_size, hidden_dim].
-        """
-        if timestamps is None or not use_temporal:
-            return self.encode_base(input_ids, attention_mask)
-        else:
-            temporal_emb, _ = self.forward(input_ids, attention_mask, timestamps)
-            return temporal_emb
-    
-    def forward_with_ablation(
-        self,
-        input_ids: torch.Tensor,
-        attention_mask: torch.Tensor,
-        timestamps: Optional[torch.Tensor] = None,
-        disable_temporal: bool = False,
-    ) -> torch.Tensor:
-        """Forward pass with optional temporal ablation.
-        
-        Args:
-            input_ids: Token IDs [batch_size, seq_len].
-            attention_mask: Attention mask [batch_size, seq_len].
-            timestamps: Optional timestamps [batch_size].
-            disable_temporal: If True, return base embeddings without modulation.
-            
-        Returns:
-            Embeddings [batch_size, hidden_dim].
-        """
-        base_embeddings = self.encode_base(input_ids, attention_mask)
-        
-        if disable_temporal or timestamps is None:
-            return base_embeddings
-        
-        # Apply temporal modulation
-        time_encoding = self.time_encoder(timestamps)
-        gates = self.temporal_gate(time_encoding)
-        temporal_embeddings = base_embeddings * gates
-        
-        return temporal_embeddings
     
     def save_pretrained(self, save_directory: str) -> None:
         """Save model weights and configuration.
@@ -455,6 +416,7 @@ class TIDELite(nn.Module):
             "gate_activation": self.config.gate_activation,
             "freeze_encoder": self.config.freeze_encoder,
             "pooling_strategy": self.config.pooling_strategy,
+            "max_seq_length": self.config.max_seq_length,
         }
         
         with open(save_path / "config.json", "w") as f:
