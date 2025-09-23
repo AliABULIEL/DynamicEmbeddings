@@ -1,296 +1,379 @@
-"""Aggregate metrics from multiple evaluation runs.
+"""Result aggregation module for TIDE-Lite.
 
-This module merges all results/metrics_*.json files and ablation results
-into summary.json and summary.csv for easy analysis.
+This module aggregates metrics from multiple evaluation runs
+into summary JSON and CSV files for analysis and reporting.
 """
 
 import csv
 import json
 import logging
+from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import pandas as pd
 
 logger = logging.getLogger(__name__)
 
 
-class MetricsAggregator:
-    """Aggregates metrics from multiple evaluation runs."""
+@dataclass
+class ModelResults:
+    """Container for all results from a single model."""
+    model_name: str
+    stsb: Optional[Dict[str, float]] = None
+    quora: Optional[Dict[str, float]] = None
+    temporal: Optional[Dict[str, float]] = None
+    training: Optional[Dict[str, float]] = None
+    extra_params: int = 0
     
-    def __init__(self, results_dir: Path = Path("results")) -> None:
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary format."""
+        return {
+            "model_name": self.model_name,
+            "stsb": self.stsb or {},
+            "quora": self.quora or {},
+            "temporal": self.temporal or {},
+            "training": self.training or {},
+            "extra_params": self.extra_params,
+        }
+
+
+class ResultAggregator:
+    """Aggregates evaluation results from multiple models."""
+    
+    def __init__(self, results_dir: Union[str, Path]) -> None:
         """Initialize aggregator.
         
         Args:
-            results_dir: Directory containing metrics files.
+            results_dir: Directory containing result files.
         """
         self.results_dir = Path(results_dir)
-    
-    def find_metrics_files(self) -> Dict[str, List[Path]]:
-        """Find all metrics JSON files.
+        self.models: Dict[str, ModelResults] = {}
         
-        Returns:
-            Dictionary mapping metric types to file paths.
-        """
-        patterns = {
-            "stsb": "metrics_stsb_*.json",
-            "quora": "metrics_quora_*.json",
-            "temporal": "metrics_temporal_*.json",
-            "train": "metrics_train*.json",
-            "ablation": "ablation_*/metrics_*.json",
+        if not self.results_dir.exists():
+            raise FileNotFoundError(f"Results directory not found: {self.results_dir}")
+    
+    def scan_results(self) -> None:
+        """Scan results directory for metrics files."""
+        logger.info(f"Scanning {self.results_dir} for metrics files")
+        
+        # Find all metrics files
+        stsb_files = list(self.results_dir.glob("**/metrics_stsb_*.json"))
+        quora_files = list(self.results_dir.glob("**/metrics_quora_*.json"))
+        temporal_files = list(self.results_dir.glob("**/metrics_temporal_*.json"))
+        train_files = list(self.results_dir.glob("**/metrics_train.json"))
+        
+        logger.info(f"Found {len(stsb_files)} STS-B results")
+        logger.info(f"Found {len(quora_files)} Quora results")
+        logger.info(f"Found {len(temporal_files)} Temporal results")
+        logger.info(f"Found {len(train_files)} Training results")
+        
+        # Process STS-B results
+        for file in stsb_files:
+            self._process_stsb_file(file)
+        
+        # Process Quora results
+        for file in quora_files:
+            self._process_quora_file(file)
+        
+        # Process Temporal results
+        for file in temporal_files:
+            self._process_temporal_file(file)
+        
+        # Process Training results
+        for file in train_files:
+            self._process_train_file(file)
+    
+    def _extract_model_name(self, filename: str) -> str:
+        """Extract model name from filename."""
+        # Remove metrics_ prefix and .json suffix
+        name = filename.replace("metrics_", "").replace(".json", "")
+        # Remove task prefix
+        for prefix in ["stsb_", "quora_", "temporal_"]:
+            if name.startswith(prefix):
+                name = name[len(prefix):]
+        return name
+    
+    def _process_stsb_file(self, file: Path) -> None:
+        """Process STS-B metrics file."""
+        try:
+            with open(file) as f:
+                data = json.load(f)
+            
+            model_name = self._extract_model_name(file.name)
+            
+            if model_name not in self.models:
+                self.models[model_name] = ModelResults(model_name)
+            
+            self.models[model_name].stsb = {
+                "spearman": data.get("spearman_correlation", 0.0),
+                "pearson": data.get("pearson_correlation", 0.0),
+                "mse": data.get("mse", 0.0),
+            }
+            
+            logger.debug(f"Loaded STS-B results for {model_name}")
+        except Exception as e:
+            logger.warning(f"Failed to process {file}: {e}")
+    
+    def _process_quora_file(self, file: Path) -> None:
+        """Process Quora retrieval metrics file."""
+        try:
+            with open(file) as f:
+                data = json.load(f)
+            
+            model_name = self._extract_model_name(file.name)
+            
+            if model_name not in self.models:
+                self.models[model_name] = ModelResults(model_name)
+            
+            metrics = data.get("metrics", data)
+            self.models[model_name].quora = {
+                "ndcg_at_10": metrics.get("ndcg_at_10", 0.0),
+                "recall_at_10": metrics.get("recall_at_10", 0.0),
+                "mrr_at_10": metrics.get("mrr_at_10", 0.0),
+                "map_at_10": metrics.get("map_at_10", 0.0),
+                "latency_median_ms": metrics.get("latency_median_ms", 0.0),
+            }
+            
+            logger.debug(f"Loaded Quora results for {model_name}")
+        except Exception as e:
+            logger.warning(f"Failed to process {file}: {e}")
+    
+    def _process_temporal_file(self, file: Path) -> None:
+        """Process temporal evaluation metrics file."""
+        try:
+            with open(file) as f:
+                data = json.load(f)
+            
+            model_name = self._extract_model_name(file.name)
+            
+            if model_name not in self.models:
+                self.models[model_name] = ModelResults(model_name)
+            
+            metrics = data.get("metrics", data)
+            self.models[model_name].temporal = {
+                "accuracy_at_1": metrics.get("temporal_accuracy_at_1", 0.0),
+                "accuracy_at_5": metrics.get("temporal_accuracy_at_5", 0.0),
+                "consistency_score": metrics.get("temporal_consistency_score", 0.0),
+                "time_drift_mae": metrics.get("time_drift_mae_days", 0.0),
+            }
+            
+            logger.debug(f"Loaded Temporal results for {model_name}")
+        except Exception as e:
+            logger.warning(f"Failed to process {file}: {e}")
+    
+    def _process_train_file(self, file: Path) -> None:
+        """Process training metrics file."""
+        try:
+            with open(file) as f:
+                data = json.load(f)
+            
+            # Extract model name from parent directory
+            model_name = file.parent.parent.name
+            
+            if model_name not in self.models:
+                self.models[model_name] = ModelResults(model_name)
+            
+            self.models[model_name].training = {
+                "final_loss": data.get("final_loss", 0.0),
+                "best_val_score": data.get("best_val_score", 0.0),
+                "total_epochs": data.get("num_epochs", 0),
+                "training_time": data.get("total_time", 0.0),
+            }
+            
+            # Extract extra parameters if available
+            if "model_info" in data:
+                self.models[model_name].extra_params = data["model_info"].get("trainable_params", 0)
+            
+            logger.debug(f"Loaded Training results for {model_name}")
+        except Exception as e:
+            logger.warning(f"Failed to process {file}: {e}")
+    
+    def compute_summary_stats(self) -> Dict[str, Any]:
+        """Compute summary statistics across all models."""
+        summary = {
+            "best_models": {},
+            "averages": {},
+            "improvements": {},
         }
         
-        found_files = {}
-        for metric_type, pattern in patterns.items():
-            files = list(self.results_dir.rglob(pattern))
-            if files:
-                found_files[metric_type] = files
-                logger.info(f"Found {len(files)} {metric_type} metrics files")
-        
-        return found_files
-    
-    def load_metrics(self, file_path: Path) -> Dict[str, Any]:
-        """Load metrics from JSON file.
-        
-        Args:
-            file_path: Path to JSON file.
-            
-        Returns:
-            Metrics dictionary.
-        """
-        with open(file_path) as f:
-            return json.load(f)
-    
-    def aggregate(self) -> Dict[str, Any]:
-        """Aggregate all metrics into summary.
-        
-        Returns:
-            Aggregated metrics dictionary.
-        """
-        files = self.find_metrics_files()
-        summary = {"models": {}, "ablations": {}, "metadata": {}}
-        
-        # Process STS-B metrics
-        for file_path in files.get("stsb", []):
-            metrics = self.load_metrics(file_path)
-            model_name = metrics.get("model", file_path.stem.replace("metrics_stsb_", ""))
-            
-            if model_name not in summary["models"]:
-                summary["models"][model_name] = {}
-            
-            summary["models"][model_name]["stsb"] = {
-                "spearman": metrics.get("metrics", {}).get("spearman_rho", 0),
-                "pearson": metrics.get("metrics", {}).get("pearson_r", 0),
-                "mse": metrics.get("metrics", {}).get("mse", 0),
+        # Find best models for each metric
+        if any(m.stsb for m in self.models.values()):
+            stsb_scores = {
+                name: model.stsb["spearman"] 
+                for name, model in self.models.items() 
+                if model.stsb
             }
+            if stsb_scores:
+                summary["best_models"]["stsb_spearman"] = max(stsb_scores, key=stsb_scores.get)
         
-        # Process Quora retrieval metrics
-        for file_path in files.get("quora", []):
-            metrics = self.load_metrics(file_path)
-            model_name = metrics.get("model", file_path.stem.replace("metrics_quora_", ""))
-            
-            if model_name not in summary["models"]:
-                summary["models"][model_name] = {}
-            
-            summary["models"][model_name]["quora"] = {
-                "ndcg_at_10": metrics.get("metrics", {}).get("ndcg_at_10", 0),
-                "recall_at_10": metrics.get("metrics", {}).get("recall_at_10", 0),
-                "mrr_at_10": metrics.get("metrics", {}).get("mrr_at_10", 0),
-                "latency_median_ms": metrics.get("metrics", {}).get("latency_median_ms", 0),
+        if any(m.quora for m in self.models.values()):
+            quora_scores = {
+                name: model.quora["ndcg_at_10"] 
+                for name, model in self.models.items() 
+                if model.quora
             }
+            if quora_scores:
+                summary["best_models"]["quora_ndcg"] = max(quora_scores, key=quora_scores.get)
         
-        # Process temporal metrics
-        for file_path in files.get("temporal", []):
-            metrics = self.load_metrics(file_path)
-            model_name = metrics.get("model", file_path.stem.replace("metrics_temporal_", ""))
-            
-            if model_name not in summary["models"]:
-                summary["models"][model_name] = {}
-            
-            summary["models"][model_name]["temporal"] = {
-                "accuracy_at_1": metrics.get("metrics", {}).get("temporal_accuracy_at_1", 0),
-                "accuracy_at_5": metrics.get("metrics", {}).get("temporal_accuracy_at_5", 0),
-                "consistency_score": metrics.get("metrics", {}).get("temporal_consistency_score", 0),
-                "time_drift_mae": metrics.get("metrics", {}).get("time_drift_mae_days", 0),
+        if any(m.temporal for m in self.models.values()):
+            temporal_scores = {
+                name: model.temporal["consistency_score"] 
+                for name, model in self.models.items() 
+                if model.temporal
             }
+            if temporal_scores:
+                summary["best_models"]["temporal_consistency"] = max(temporal_scores, key=temporal_scores.get)
         
-        # Process ablation results
-        for file_path in files.get("ablation", []):
-            metrics = self.load_metrics(file_path)
-            ablation_name = file_path.parent.name
+        # Calculate improvements (TIDE-Lite vs baselines)
+        if "tide_lite" in self.models and "minilm" in self.models:
+            tide = self.models["tide_lite"]
+            baseline = self.models["minilm"]
             
-            summary["ablations"][ablation_name] = {
-                "config": metrics.get("config", {}),
-                "metrics": metrics.get("metrics", {}),
-            }
-        
-        # Add best model per metric
-        summary["best_models"] = self._find_best_models(summary["models"])
-        
-        # Add metadata
-        summary["metadata"]["num_models"] = len(summary["models"])
-        summary["metadata"]["num_ablations"] = len(summary["ablations"])
-        summary["metadata"]["timestamp"] = pd.Timestamp.now().isoformat()
+            if tide.stsb and baseline.stsb:
+                summary["improvements"]["stsb_spearman"] = (
+                    tide.stsb["spearman"] - baseline.stsb["spearman"]
+                )
+            
+            if tide.quora and baseline.quora:
+                summary["improvements"]["quora_ndcg"] = (
+                    tide.quora["ndcg_at_10"] - baseline.quora["ndcg_at_10"]
+                )
+            
+            if tide.temporal and baseline.temporal:
+                summary["improvements"]["temporal_consistency"] = (
+                    tide.temporal["consistency_score"] - baseline.temporal["consistency_score"]
+                )
         
         return summary
     
-    def _find_best_models(self, models: Dict[str, Any]) -> Dict[str, str]:
-        """Find best model for each metric.
+    def save_json(self, output_file: Union[str, Path]) -> None:
+        """Save aggregated results to JSON file.
         
         Args:
-            models: Dictionary of model metrics.
-            
-        Returns:
-            Dictionary mapping metrics to best model names.
+            output_file: Output JSON file path.
         """
-        best = {}
+        output_file = Path(output_file)
+        output_file.parent.mkdir(parents=True, exist_ok=True)
         
-        # STS-B: highest Spearman
-        best_spearman = 0
-        best_spearman_model = None
-        for model, metrics in models.items():
-            if "stsb" in metrics:
-                if metrics["stsb"]["spearman"] > best_spearman:
-                    best_spearman = metrics["stsb"]["spearman"]
-                    best_spearman_model = model
-        if best_spearman_model:
-            best["stsb_spearman"] = best_spearman_model
+        results = {
+            "models": {name: model.to_dict() for name, model in self.models.items()},
+            "summary": self.compute_summary_stats(),
+        }
         
-        # Quora: highest nDCG@10
-        best_ndcg = 0
-        best_ndcg_model = None
-        for model, metrics in models.items():
-            if "quora" in metrics:
-                if metrics["quora"]["ndcg_at_10"] > best_ndcg:
-                    best_ndcg = metrics["quora"]["ndcg_at_10"]
-                    best_ndcg_model = model
-        if best_ndcg_model:
-            best["quora_ndcg"] = best_ndcg_model
+        with open(output_file, "w") as f:
+            json.dump(results, f, indent=2)
         
-        # Temporal: highest consistency
-        best_consistency = 0
-        best_consistency_model = None
-        for model, metrics in models.items():
-            if "temporal" in metrics:
-                if metrics["temporal"]["consistency_score"] > best_consistency:
-                    best_consistency = metrics["temporal"]["consistency_score"]
-                    best_consistency_model = model
-        if best_consistency_model:
-            best["temporal_consistency"] = best_consistency_model
-        
-        return best
+        logger.info(f"Saved aggregated results to {output_file}")
     
-    def save_json(self, summary: Dict[str, Any], output_path: Path) -> None:
-        """Save summary as JSON.
+    def save_csv(self, output_file: Union[str, Path]) -> None:
+        """Save aggregated results to CSV file.
         
         Args:
-            summary: Summary dictionary.
-            output_path: Output file path.
+            output_file: Output CSV file path.
         """
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(output_path, "w") as f:
-            json.dump(summary, f, indent=2, default=str)
-        logger.info(f"Saved JSON summary to {output_path}")
-    
-    def save_csv(self, summary: Dict[str, Any], output_path: Path) -> None:
-        """Save summary as CSV.
+        output_file = Path(output_file)
+        output_file.parent.mkdir(parents=True, exist_ok=True)
         
-        Args:
-            summary: Summary dictionary.
-            output_path: Output file path.
-        """
-        # Convert to flat table
         rows = []
-        for model_name, model_metrics in summary["models"].items():
-            row = {"model": model_name}
+        for name, model in self.models.items():
+            row = {"model": name}
             
-            # Flatten nested metrics
-            for task, task_metrics in model_metrics.items():
-                for metric_name, value in task_metrics.items():
-                    row[f"{task}_{metric_name}"] = value
+            if model.stsb:
+                row.update({f"stsb_{k}": v for k, v in model.stsb.items()})
             
+            if model.quora:
+                row.update({f"quora_{k}": v for k, v in model.quora.items()})
+            
+            if model.temporal:
+                row.update({f"temporal_{k}": v for k, v in model.temporal.items()})
+            
+            if model.training:
+                row.update({f"train_{k}": v for k, v in model.training.items()})
+            
+            row["extra_params"] = model.extra_params
             rows.append(row)
         
-        # Save as CSV
         if rows:
             df = pd.DataFrame(rows)
-            df.to_csv(output_path, index=False)
-            logger.info(f"Saved CSV summary to {output_path}")
+            df.to_csv(output_file, index=False)
+            logger.info(f"Saved CSV results to {output_file}")
+        else:
+            logger.warning("No results to save to CSV")
     
-    def run(
-        self,
-        output_json: Optional[Path] = None,
-        output_csv: Optional[Path] = None,
-    ) -> Dict[str, Any]:
-        """Run aggregation and save results.
+    def print_summary(self) -> None:
+        """Print summary of aggregated results."""
+        print("\n" + "=" * 70)
+        print("AGGREGATED RESULTS SUMMARY")
+        print("=" * 70)
         
-        Args:
-            output_json: Path for JSON output.
-            output_csv: Path for CSV output.
+        for name, model in self.models.items():
+            print(f"\n📊 {name}")
             
-        Returns:
-            Aggregated summary.
-        """
-        summary = self.aggregate()
+            if model.stsb:
+                print(f"  STS-B: Spearman={model.stsb['spearman']:.4f}")
+            
+            if model.quora:
+                print(f"  Quora: nDCG@10={model.quora['ndcg_at_10']:.4f}")
+            
+            if model.temporal:
+                print(f"  Temporal: Consistency={model.temporal['consistency_score']:.4f}")
+            
+            if model.extra_params:
+                print(f"  Extra Params: {model.extra_params:,}")
         
+        summary = self.compute_summary_stats()
+        
+        if summary["best_models"]:
+            print("\n🏆 Best Models:")
+            for metric, model in summary["best_models"].items():
+                print(f"  {metric}: {model}")
+        
+        if summary["improvements"]:
+            print("\n📈 TIDE-Lite Improvements:")
+            for metric, improvement in summary["improvements"].items():
+                print(f"  {metric}: {improvement:+.4f}")
+        
+        print("\n" + "=" * 70)
+
+
+def aggregate_results(
+    results_dir: Union[str, Path],
+    output_json: Optional[Union[str, Path]] = None,
+    output_csv: Optional[Union[str, Path]] = None,
+    dry_run: bool = False,
+) -> Dict[str, Any]:
+    """Aggregate evaluation results from a directory.
+    
+    Args:
+        results_dir: Directory containing result files.
+        output_json: Output JSON file path.
+        output_csv: Output CSV file path.
+        dry_run: If True, only show plan without saving.
+        
+    Returns:
+        Aggregated results dictionary.
+    """
+    if dry_run:
+        logger.info("[DRY RUN] Would aggregate results from:")
+        logger.info(f"  Directory: {results_dir}")
         if output_json:
-            self.save_json(summary, output_json)
-        
+            logger.info(f"  JSON output: {output_json}")
         if output_csv:
-            self.save_csv(summary, output_csv)
-        
-        return summary
-
-
-def main() -> None:
-    """Command-line interface for aggregation."""
-    import argparse
+            logger.info(f"  CSV output: {output_csv}")
+        return {}
     
-    parser = argparse.ArgumentParser(description="Aggregate evaluation metrics")
-    parser.add_argument(
-        "--results-dir",
-        type=Path,
-        default=Path("results"),
-        help="Results directory",
-    )
-    parser.add_argument(
-        "--output",
-        type=Path,
-        default=Path("results/summary.json"),
-        help="Output file path",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        default=True,
-        help="Show plan without executing (default)",
-    )
-    parser.add_argument(
-        "--run",
-        action="store_true",
-        help="Actually execute aggregation",
-    )
+    aggregator = ResultAggregator(results_dir)
+    aggregator.scan_results()
+    aggregator.print_summary()
     
-    args = parser.parse_args()
+    if output_json:
+        aggregator.save_json(output_json)
     
-    if not args.run:
-        print("[DRY RUN] Would aggregate metrics from:", args.results_dir)
-        print("[DRY RUN] Would save to:")
-        print(f"  JSON: {args.output}")
-        print(f"  CSV: {args.output.with_suffix('.csv')}")
-        return
+    if output_csv:
+        aggregator.save_csv(output_csv)
     
-    aggregator = MetricsAggregator(args.results_dir)
-    summary = aggregator.run(
-        output_json=args.output,
-        output_csv=args.output.with_suffix(".csv"),
-    )
-    
-    print(f"Aggregated {summary['metadata']['num_models']} models")
-    print(f"Best models:")
-    for metric, model in summary.get("best_models", {}).items():
-        print(f"  {metric}: {model}")
-
-
-if __name__ == "__main__":
-    main()
+    return {
+        "models": {name: model.to_dict() for name, model in aggregator.models.items()},
+        "summary": aggregator.compute_summary_stats(),
+    }

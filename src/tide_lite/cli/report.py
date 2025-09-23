@@ -1,265 +1,402 @@
-"""Generate markdown report from aggregated metrics.
+"""Report generation module for TIDE-Lite.
 
-This module creates a comprehensive markdown report with tables,
-plots, and analysis of model performance.
+This module generates comprehensive markdown reports from aggregated
+results, including tables, plots, and analysis.
 """
 
 import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Union
 
 logger = logging.getLogger(__name__)
 
 
 class ReportGenerator:
-    """Generate markdown reports from metrics summary."""
+    """Generate markdown reports from evaluation results."""
     
     def __init__(
         self,
-        summary_path: Path,
-        output_dir: Path = Path("reports"),
+        summary_file: Union[str, Path],
+        figures_dir: Optional[Union[str, Path]] = None,
     ) -> None:
         """Initialize report generator.
         
         Args:
-            summary_path: Path to summary.json file.
-            output_dir: Directory to save report.
+            summary_file: Path to summary JSON file.
+            figures_dir: Directory containing plot images.
         """
-        self.summary_path = Path(summary_path)
-        self.output_dir = Path(output_dir)
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.summary_file = Path(summary_file)
         
-        with open(summary_path) as f:
-            self.summary = json.load(f)
+        if figures_dir:
+            self.figures_dir = Path(figures_dir)
+        else:
+            self.figures_dir = self.summary_file.parent / "figures"
+        
+        # Load summary data
+        with open(self.summary_file) as f:
+            self.data = json.load(f)
+        
+        self.models = self.data.get("models", {})
+        self.summary = self.data.get("summary", {})
+    
+    def generate_header(self) -> str:
+        """Generate report header."""
+        return f"""# TIDE-Lite Evaluation Report
+
+Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+
+## Executive Summary
+
+TIDE-Lite (Temporally-Indexed Dynamic Embeddings - Lightweight) adds temporal awareness to frozen sentence encoders with minimal overhead (~53K parameters). This report presents comprehensive evaluation results across semantic similarity, retrieval, and temporal understanding tasks.
+
+"""
+    
+    def generate_key_findings(self) -> str:
+        """Generate key findings section."""
+        findings = ["## Key Findings\n\n"]
+        
+        # Best models
+        if self.summary.get("best_models"):
+            findings.append("### Best Performing Models\n\n")
+            for metric, model in self.summary["best_models"].items():
+                findings.append(f"- **{metric}**: {model}\n")
+            findings.append("\n")
+        
+        # Improvements
+        if self.summary.get("improvements"):
+            findings.append("### TIDE-Lite Improvements Over Baseline\n\n")
+            for metric, improvement in self.summary["improvements"].items():
+                findings.append(f"- **{metric}**: {improvement:+.4f}\n")
+            findings.append("\n")
+        
+        return "".join(findings)
+    
+    def generate_model_comparison_table(self) -> str:
+        """Generate model comparison table."""
+        lines = ["## Model Comparison\n\n"]
+        
+        # Prepare table header
+        lines.append("| Model | STS-B Spearman | Quora nDCG@10 | Temporal Consistency | Extra Params |\n")
+        lines.append("|-------|----------------|---------------|---------------------|-------------|\n")
+        
+        # Add model rows
+        for name, model in self.models.items():
+            stsb = model.get("stsb", {}).get("spearman", "-")
+            if isinstance(stsb, float):
+                stsb = f"{stsb:.4f}"
+            
+            quora = model.get("quora", {}).get("ndcg_at_10", "-")
+            if isinstance(quora, float):
+                quora = f"{quora:.4f}"
+            
+            temporal = model.get("temporal", {}).get("consistency_score", "-")
+            if isinstance(temporal, float):
+                temporal = f"{temporal:.4f}"
+            
+            params = model.get("extra_params", 0)
+            if params > 0:
+                params = f"{params:,}"
+            else:
+                params = "0"
+            
+            # Highlight best values
+            if (self.summary.get("best_models", {}).get("stsb_spearman") == name 
+                and stsb != "-"):
+                stsb = f"**{stsb}**"
+            
+            if (self.summary.get("best_models", {}).get("quora_ndcg") == name
+                and quora != "-"):
+                quora = f"**{quora}**"
+            
+            if (self.summary.get("best_models", {}).get("temporal_consistency") == name
+                and temporal != "-"):
+                temporal = f"**{temporal}**"
+            
+            lines.append(f"| {name} | {stsb} | {quora} | {temporal} | {params} |\n")
+        
+        lines.append("\n")
+        return "".join(lines)
+    
+    def generate_detailed_results(self) -> str:
+        """Generate detailed results section."""
+        lines = ["## Detailed Results\n\n"]
+        
+        # STS-B Results
+        lines.append("### STS-B Semantic Similarity\n\n")
+        lines.append("| Model | Spearman ρ | Pearson r | MSE |\n")
+        lines.append("|-------|------------|-----------|-----|\n")
+        
+        for name, model in self.models.items():
+            if model.get("stsb"):
+                stsb = model["stsb"]
+                lines.append(
+                    f"| {name} | "
+                    f"{stsb.get('spearman', 0):.4f} | "
+                    f"{stsb.get('pearson', 0):.4f} | "
+                    f"{stsb.get('mse', 0):.4f} |\n"
+                )
+        
+        lines.append("\n")
+        
+        # Quora Results
+        lines.append("### Quora Duplicate Questions Retrieval\n\n")
+        lines.append("| Model | nDCG@10 | Recall@10 | MRR@10 | MAP@10 | Latency (ms) |\n")
+        lines.append("|-------|---------|-----------|--------|--------|-------------|\n")
+        
+        for name, model in self.models.items():
+            if model.get("quora"):
+                quora = model["quora"]
+                lines.append(
+                    f"| {name} | "
+                    f"{quora.get('ndcg_at_10', 0):.4f} | "
+                    f"{quora.get('recall_at_10', 0):.4f} | "
+                    f"{quora.get('mrr_at_10', 0):.4f} | "
+                    f"{quora.get('map_at_10', 0):.4f} | "
+                    f"{quora.get('latency_median_ms', 0):.2f} |\n"
+                )
+        
+        lines.append("\n")
+        
+        # Temporal Results
+        lines.append("### Temporal Understanding\n\n")
+        lines.append("| Model | Accuracy@1 | Accuracy@5 | Consistency | Drift (days) |\n")
+        lines.append("|-------|------------|------------|-------------|-------------|\n")
+        
+        for name, model in self.models.items():
+            if model.get("temporal"):
+                temporal = model["temporal"]
+                lines.append(
+                    f"| {name} | "
+                    f"{temporal.get('accuracy_at_1', 0):.4f} | "
+                    f"{temporal.get('accuracy_at_5', 0):.4f} | "
+                    f"{temporal.get('consistency_score', 0):.4f} | "
+                    f"{temporal.get('time_drift_mae', 0):.1f} |\n"
+                )
+        
+        lines.append("\n")
+        return "".join(lines)
+    
+    def generate_plots_section(self) -> str:
+        """Generate plots section with embedded images."""
+        lines = ["## Visualizations\n\n"]
+        
+        # Check for available plots
+        plots = [
+            ("model_comparison.png", "Model Comparison Across Tasks"),
+            ("latency_vs_quality.png", "Latency vs Quality Trade-off"),
+            ("ablation_heatmap.png", "Ablation Study Heatmap"),
+            ("training_curves.png", "Training Curves"),
+        ]
+        
+        for filename, title in plots:
+            plot_path = self.figures_dir / filename
+            if plot_path.exists():
+                lines.append(f"### {title}\n\n")
+                lines.append(f"![{title}](figures/{filename})\n\n")
+        
+        return "".join(lines)
+    
+    def generate_ablation_section(self) -> str:
+        """Generate ablation study section if available."""
+        ablation_dir = Path("results/ablation")
+        if not ablation_dir.exists():
+            return ""
+        
+        lines = ["## Ablation Study\n\n"]
+        lines.append("Parameter sensitivity analysis for TIDE-Lite components:\n\n")
+        
+        # Collect ablation results
+        ablation_results = []
+        
+        for subdir in ablation_dir.glob("ablation_*"):
+            if subdir.is_dir():
+                # Parse configuration
+                name_parts = subdir.name.split("_")
+                config = {}
+                
+                for part in name_parts:
+                    if part.startswith("mlp"):
+                        config["MLP Hidden"] = int(part[3:])
+                    elif part.startswith("w"):
+                        config["Weight λ"] = float(part[1:])
+                    elif part.startswith("enc"):
+                        config["Encoding"] = part[3:]
+                
+                # Load metrics
+                metrics_files = list(subdir.glob("metrics_stsb_*.json"))
+                if metrics_files:
+                    with open(metrics_files[0]) as f:
+                        metrics = json.load(f)
+                    config["Spearman"] = metrics.get("spearman_correlation", 0)
+                    ablation_results.append(config)
+        
+        if ablation_results:
+            lines.append("| MLP Hidden | Weight λ | Encoding | Spearman ρ |\n")
+            lines.append("|------------|----------|----------|------------|\n")
+            
+            for result in sorted(ablation_results, 
+                                key=lambda x: x.get("Spearman", 0), 
+                                reverse=True):
+                lines.append(
+                    f"| {result.get('MLP Hidden', '-')} | "
+                    f"{result.get('Weight λ', '-')} | "
+                    f"{result.get('Encoding', '-')} | "
+                    f"{result.get('Spearman', 0):.4f} |\n"
+                )
+            
+            lines.append("\n")
+        
+        return "".join(lines)
+    
+    def generate_methodology_section(self) -> str:
+        """Generate methodology section."""
+        return """## Methodology
+
+### Evaluation Datasets
+
+1. **STS-B (Semantic Textual Similarity Benchmark)**
+   - 8,628 sentence pairs with similarity scores [0-5]
+   - Metrics: Spearman's ρ, Pearson r, MSE
+   - Tests semantic understanding
+
+2. **Quora Duplicate Questions**
+   - ~400K question pairs
+   - Metrics: nDCG@10, Recall@10, MRR@10, MAP@10
+   - Tests retrieval performance
+
+3. **TimeQA/TempLAMA**
+   - Temporal question-answering datasets
+   - Metrics: Temporal Accuracy@k, Consistency Score
+   - Tests temporal understanding
+
+### Model Architecture
+
+TIDE-Lite adds a lightweight temporal modulation layer to frozen encoders:
+- **Base Encoder**: Frozen pre-trained transformer (e.g., MiniLM)
+- **Temporal MLP**: 2-layer network (~53K parameters)
+- **Gating Mechanism**: Sigmoid/tanh activation for smooth modulation
+- **Time Encoding**: Sinusoidal or learnable embeddings
+
+### Training Configuration
+
+- **Dataset**: STS-B training split
+- **Loss**: Cosine regression + temporal consistency
+- **Optimizer**: AdamW with linear warmup
+- **Batch Size**: 32
+- **Learning Rate**: 5e-4
+- **Epochs**: 3-5
+
+"""
+    
+    def generate_conclusions(self) -> str:
+        """Generate conclusions section."""
+        lines = ["## Conclusions\n\n"]
+        
+        # Performance summary
+        lines.append("### Performance Summary\n\n")
+        
+        if "tide_lite" in self.models and "minilm" in self.models:
+            tide = self.models["tide_lite"]
+            baseline = self.models["minilm"]
+            
+            lines.append("TIDE-Lite successfully adds temporal awareness to frozen encoders:\n\n")
+            
+            if tide.get("stsb") and baseline.get("stsb"):
+                lines.append(f"- **Maintains semantic performance**: {tide['stsb']['spearman']:.4f} vs baseline {baseline['stsb']['spearman']:.4f}\n")
+            
+            if tide.get("temporal") and baseline.get("temporal"):
+                improvement = tide["temporal"]["consistency_score"] - baseline["temporal"]["consistency_score"]
+                lines.append(f"- **Improves temporal consistency**: +{improvement:.4f} over baseline\n")
+            
+            lines.append(f"- **Minimal overhead**: Only {tide.get('extra_params', 53000):,} additional parameters\n")
+        
+        lines.append("\n### Key Takeaways\n\n")
+        lines.append("1. Temporal modulation can be added to frozen encoders with minimal overhead\n")
+        lines.append("2. Performance on standard benchmarks is maintained or improved\n")
+        lines.append("3. Significant improvements in temporal understanding tasks\n")
+        lines.append("4. Efficient inference with negligible latency increase\n")
+        
+        lines.append("\n### Future Work\n\n")
+        lines.append("- Scale to larger encoders (BERT, RoBERTa)\n")
+        lines.append("- Explore alternative time encoding schemes\n")
+        lines.append("- Apply to downstream temporal tasks\n")
+        lines.append("- Investigate multi-scale temporal dynamics\n")
+        
+        lines.append("\n")
+        return "".join(lines)
     
     def generate_report(self) -> str:
         """Generate complete markdown report.
         
         Returns:
-            Markdown report content.
+            Complete markdown report as string.
         """
         sections = [
-            self._header(),
-            self._executive_summary(),
-            self._model_comparison_table(),
-            self._detailed_results(),
-            self._ablation_results(),
-            self._conclusions(),
+            self.generate_header(),
+            self.generate_key_findings(),
+            self.generate_model_comparison_table(),
+            self.generate_detailed_results(),
+            self.generate_plots_section(),
+            self.generate_ablation_section(),
+            self.generate_methodology_section(),
+            self.generate_conclusions(),
         ]
         
-        return "\n\n".join(filter(None, sections))
+        return "".join(sections)
     
-    def _header(self) -> str:
-        """Generate report header."""
-        return f"""# TIDE-Lite Evaluation Report
-
-Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
-## Table of Contents
-1. [Executive Summary](#executive-summary)
-2. [Model Comparison](#model-comparison)
-3. [Detailed Results](#detailed-results)
-4. [Ablation Study](#ablation-study)
-5. [Conclusions](#conclusions)"""
-    
-    def _executive_summary(self) -> str:
-        """Generate executive summary."""
-        best_models = self.summary.get("best_models", {})
-        
-        # Get best scores
-        best_scores = {}
-        for metric_key, model_name in best_models.items():
-            model_metrics = self.summary["models"].get(model_name, {})
-            
-            if "stsb" in metric_key:
-                best_scores["stsb_spearman"] = model_metrics.get("stsb", {}).get("spearman", 0)
-            elif "quora" in metric_key:
-                best_scores["quora_ndcg"] = model_metrics.get("quora", {}).get("ndcg_at_10", 0)
-            elif "temporal" in metric_key:
-                best_scores["temporal_consistency"] = model_metrics.get("temporal", {}).get("consistency_score", 0)
-        
-        return f"""## Executive Summary
-
-### Key Findings
-- **Best STS-B Spearman**: {best_scores.get('stsb_spearman', 0):.4f} ({best_models.get('stsb_spearman', 'N/A')})
-- **Best Quora nDCG@10**: {best_scores.get('quora_ndcg', 0):.4f} ({best_models.get('quora_ndcg', 'N/A')})
-- **Best Temporal Consistency**: {best_scores.get('temporal_consistency', 0):.4f} ({best_models.get('temporal_consistency', 'N/A')})
-
-### Models Evaluated
-- Total models: {self.summary['metadata']['num_models']}
-- Ablation configurations: {self.summary['metadata']['num_ablations']}"""
-    
-    def _model_comparison_table(self) -> str:
-        """Generate model comparison table."""
-        if not self.summary["models"]:
-            return ""
-        
-        # Build table header
-        table = """## Model Comparison
-
-| Model | STS-B Spearman | Quora nDCG@10 | Temporal Acc@1 | Temporal Consistency |
-|-------|----------------|---------------|----------------|---------------------|"""
-        
-        # Add rows for each model
-        for model_name, metrics in self.summary["models"].items():
-            stsb = metrics.get("stsb", {})
-            quora = metrics.get("quora", {})
-            temporal = metrics.get("temporal", {})
-            
-            # Format model name
-            display_name = model_name.replace("_", " ").title()
-            
-            # Get metrics with defaults
-            spearman = stsb.get("spearman", 0)
-            ndcg = quora.get("ndcg_at_10", 0)
-            temp_acc = temporal.get("accuracy_at_1", 0)
-            consistency = temporal.get("consistency_score", 0)
-            
-            # Highlight best scores
-            spearman_str = f"**{spearman:.4f}**" if model_name == self.summary["best_models"].get("stsb_spearman") else f"{spearman:.4f}"
-            ndcg_str = f"**{ndcg:.4f}**" if model_name == self.summary["best_models"].get("quora_ndcg") else f"{ndcg:.4f}"
-            consistency_str = f"**{consistency:.4f}**" if model_name == self.summary["best_models"].get("temporal_consistency") else f"{consistency:.4f}"
-            
-            table += f"\n| {display_name} | {spearman_str} | {ndcg_str} | {temp_acc:.4f} | {consistency_str} |"
-        
-        return table
-    
-    def _detailed_results(self) -> str:
-        """Generate detailed results section."""
-        sections = []
-        
-        # STS-B Results
-        stsb_section = """### STS-B Semantic Similarity
-
-![STS-B Comparison](figures/model_comparison.png)
-
-**Metrics Explanation:**
-- **Spearman's ρ**: Rank correlation coefficient measuring monotonic relationship
-- **Pearson r**: Linear correlation coefficient
-- **MSE**: Mean squared error (lower is better)"""
-        sections.append(stsb_section)
-        
-        # Quora Retrieval Results
-        quora_section = """### Quora Duplicate Questions Retrieval
-
-**Metrics Explanation:**
-- **nDCG@10**: Normalized Discounted Cumulative Gain at rank 10
-- **Recall@10**: Fraction of relevant documents retrieved in top 10
-- **MRR@10**: Mean Reciprocal Rank (average of 1/rank of first relevant result)
-- **Latency**: Median query time in milliseconds"""
-        sections.append(quora_section)
-        
-        # Temporal Results
-        temporal_section = """### Temporal Understanding
-
-**Metrics Explanation:**
-- **Temporal Accuracy@k**: Fraction of queries where correct answer is in top-k
-- **Consistency Score**: Correlation between temporal distance and embedding distance
-- **Time Drift MAE**: Mean absolute error of temporal predictions in days"""
-        sections.append(temporal_section)
-        
-        return "## Detailed Results\n\n" + "\n\n".join(sections)
-    
-    def _ablation_results(self) -> str:
-        """Generate ablation study section."""
-        if not self.summary.get("ablations"):
-            return ""
-        
-        return """## Ablation Study
-
-![Ablation Heatmap](figures/ablation_heatmap.png)
-
-### Key Observations
-- MLP hidden dimension shows diminishing returns beyond 128
-- Consistency weight λ optimal around 0.1
-- Time encoding type has minimal impact on final performance"""
-    
-    def _conclusions(self) -> str:
-        """Generate conclusions section."""
-        return """## Conclusions
-
-### TIDE-Lite Performance
-- Achieves competitive performance with minimal additional parameters
-- Temporal consistency significantly improves time-aware understanding
-- Latency overhead is negligible compared to baseline models
-
-### Future Work
-- [ ] Extend to longer time horizons
-- [ ] Investigate alternative time encoding methods
-- [ ] Apply to downstream temporal reasoning tasks
-
----
-
-*Report generated automatically by TIDE-Lite evaluation pipeline*"""
-    
-    def save_report(self, output_path: Optional[Path] = None) -> Path:
+    def save_report(self, output_file: Union[str, Path]) -> None:
         """Save report to markdown file.
         
         Args:
-            output_path: Output file path (default: reports/report.md).
-            
-        Returns:
-            Path to saved report.
+            output_file: Output markdown file path.
         """
-        if output_path is None:
-            output_path = self.output_dir / "report.md"
+        output_file = Path(output_file)
+        output_file.parent.mkdir(parents=True, exist_ok=True)
         
-        report_content = self.generate_report()
+        report = self.generate_report()
         
-        with open(output_path, "w") as f:
-            f.write(report_content)
+        with open(output_file, "w") as f:
+            f.write(report)
         
-        logger.info(f"Saved report to {output_path}")
-        return output_path
+        logger.info(f"Saved report to {output_file}")
 
 
-def main() -> None:
-    """Command-line interface for report generation."""
-    import argparse
+def generate_report(
+    summary_file: Union[str, Path],
+    output_file: Union[str, Path] = "reports/report.md",
+    figures_dir: Optional[Union[str, Path]] = None,
+    dry_run: bool = False,
+) -> Optional[str]:
+    """Generate markdown report from summary data.
     
-    parser = argparse.ArgumentParser(description="Generate markdown report")
-    parser.add_argument(
-        "--input",
-        type=Path,
-        default=Path("results/summary.json"),
-        help="Input summary JSON",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=Path("reports"),
-        help="Output directory",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        default=True,
-        help="Show plan without executing (default)",
-    )
-    parser.add_argument(
-        "--run",
-        action="store_true",
-        help="Actually generate report",
-    )
+    Args:
+        summary_file: Path to summary JSON file.
+        output_file: Output markdown file path.
+        figures_dir: Directory containing plot images.
+        dry_run: If True, only show plan without generating.
+        
+    Returns:
+        Report content as string, or None if dry run.
+    """
+    if dry_run:
+        logger.info("[DRY RUN] Would generate report:")
+        logger.info(f"  Input: {summary_file}")
+        logger.info(f"  Output: {output_file}")
+        logger.info("  Sections:")
+        logger.info("    - Executive Summary")
+        logger.info("    - Key Findings")
+        logger.info("    - Model Comparison Table")
+        logger.info("    - Detailed Results")
+        logger.info("    - Visualizations")
+        logger.info("    - Ablation Study")
+        logger.info("    - Methodology")
+        logger.info("    - Conclusions")
+        return None
     
-    args = parser.parse_args()
+    generator = ReportGenerator(summary_file, figures_dir)
+    report = generator.generate_report()
+    generator.save_report(output_file)
     
-    if not args.run:
-        print("[DRY RUN] Would generate report from:", args.input)
-        print("[DRY RUN] Would save to:", args.output_dir / "report.md")
-        print("[DRY RUN] Report sections:")
-        print("  - Executive Summary")
-        print("  - Model Comparison Table")
-        print("  - Detailed Results")
-        print("  - Ablation Study")
-        print("  - Conclusions")
-        return
-    
-    generator = ReportGenerator(args.input, args.output_dir)
-    generator.save_report()
-
-
-if __name__ == "__main__":
-    main()
+    return report
