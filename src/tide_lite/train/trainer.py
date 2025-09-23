@@ -1,30 +1,28 @@
-"""Training orchestration for TIDE-Lite models.
+"""Trainer for TIDE-Lite model.
 
-This module provides the main training loop with support for
-mixed precision, checkpointing, and comprehensive logging.
+This module provides the main training logic for TIDE-Lite,
+training only the temporal MLP while keeping the encoder frozen.
 """
 
 import json
 import logging
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass, asdict
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
-from torch.amp import autocast, GradScaler
+from torch.cuda.amp import GradScaler, autocast
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from ..data.collate import STSBCollator, TextBatcher
-from ..data.datasets import DatasetConfig, load_stsb_with_timestamps
 from ..models.tide_lite import TIDELite, TIDELiteConfig
-from ..utils.common import seed_everything
-from ..utils.config import setup_logging
-from .losses import combined_tide_loss, cosine_regression_loss, temporal_consistency_loss
+from ..data.dataloaders import create_stsb_dataloaders
+from .losses import TIDELiteLoss
 
 logger = logging.getLogger(__name__)
 
@@ -36,331 +34,203 @@ class TrainingConfig:
     Attributes:
         # Model
         encoder_name: Base encoder model name.
-        hidden_dim: Hidden dimension of encoder.
-        time_encoding_dim: Dimension for temporal encoding.
+        time_encoding_dim: Dimension of temporal encoding.
         mlp_hidden_dim: Hidden dimension of temporal MLP.
-        mlp_dropout: Dropout in temporal MLP.
-        freeze_encoder: Whether to freeze encoder weights.
-        
-        # Data
-        batch_size: Training batch size.
-        eval_batch_size: Evaluation batch size.
-        max_seq_length: Maximum sequence length.
-        num_workers: DataLoader workers.
+        mlp_dropout: Dropout rate in MLP.
+        gate_activation: Activation for gating ('sigmoid' or 'tanh').
         
         # Training
         num_epochs: Number of training epochs.
+        batch_size: Training batch size.
+        eval_batch_size: Evaluation batch size.
         learning_rate: Peak learning rate.
-        warmup_steps: Linear warmup steps.
-        weight_decay: AdamW weight decay.
-        gradient_clip: Max gradient norm.
+        weight_decay: Weight decay for AdamW.
+        warmup_steps: Number of warmup steps.
         
         # Loss weights
         temporal_weight: Weight for temporal consistency loss.
-        preservation_weight: Weight for base embedding preservation.
-        tau_seconds: Time constant for temporal loss.
+        preservation_weight: Weight for preservation loss.
+        tau_seconds: Time constant for temporal consistency.
         
-        # Mixed precision
+        # Data
+        max_seq_length: Maximum sequence length.
+        num_workers: Number of dataloader workers.
+        cache_dir: Cache directory for datasets.
+        
+        # Optimization
         use_amp: Whether to use automatic mixed precision.
+        gradient_clip: Gradient clipping value.
         
         # Checkpointing
-        save_every_n_steps: Checkpoint frequency.
-        eval_every_n_steps: Evaluation frequency.
+        output_dir: Output directory for results.
+        save_every: Save checkpoint every N steps (0 = epoch only).
+        eval_every: Evaluate every N steps (0 = epoch only).
         
-        # Paths
-        output_dir: Directory for outputs.
-        checkpoint_dir: Directory for checkpoints.
-        
-        # Misc
+        # Other
         seed: Random seed.
-        log_level: Logging verbosity.
-        dry_run: Whether to perform dry run only.
+        dry_run: Whether to just print the plan without execution.
     """
     # Model
     encoder_name: str = "sentence-transformers/all-MiniLM-L6-v2"
-    hidden_dim: int = 384
     time_encoding_dim: int = 32
     mlp_hidden_dim: int = 128
     mlp_dropout: float = 0.1
-    freeze_encoder: bool = True
-    pooling_strategy: str = "mean"  # "mean", "cls", or "max"
-    gate_activation: str = "sigmoid"  # "sigmoid" or "tanh"
-    
-    # Data
-    batch_size: int = 32
-    eval_batch_size: int = 64
-    max_seq_length: int = 128
-    num_workers: int = 2
+    gate_activation: str = "sigmoid"
     
     # Training
     num_epochs: int = 3
+    batch_size: int = 32
+    eval_batch_size: int = 64
     learning_rate: float = 5e-5
-    warmup_steps: int = 100
     weight_decay: float = 0.01
-    gradient_clip: float = 1.0
+    warmup_steps: int = 100
     
     # Loss weights
     temporal_weight: float = 0.1
     preservation_weight: float = 0.05
     tau_seconds: float = 86400.0
     
-    # Mixed precision
+    # Data
+    max_seq_length: int = 128
+    num_workers: int = 2
+    cache_dir: str = "./data"
+    
+    # Optimization
     use_amp: bool = True
+    gradient_clip: float = 1.0
     
     # Checkpointing
-    save_every_n_steps: int = 500
-    eval_every_n_steps: int = 500
+    output_dir: Optional[str] = None
+    save_every: int = 0
+    eval_every: int = 0
     
-    # Paths
-    output_dir: str = "results/default_run"
-    checkpoint_dir: Optional[str] = None  # Uses output_dir/checkpoints if None
-    
-    # Misc
+    # Other
     seed: int = 42
-    log_level: str = "INFO"
-    dry_run: bool = False
-    device: Optional[str] = None  # "cpu", "cuda", or None (auto-detect)
-    temporal_enabled: bool = True  # Enable temporal module
-    
-    def __post_init__(self) -> None:
-        """Post-initialization setup."""
-        if self.checkpoint_dir is None:
-            self.checkpoint_dir = str(Path(self.output_dir) / "checkpoints")
+    dry_run: bool = True  # Default to dry-run
 
 
-class TIDETrainer:
-    """Trainer for TIDE-Lite models.
-    
-    Handles the complete training pipeline including data loading,
-    optimization, checkpointing, and metric logging.
-    """
+class TIDELiteTrainer:
+    """Trainer for TIDE-Lite model."""
     
     def __init__(
         self,
-        model: TIDELite,
         config: TrainingConfig,
+        model: Optional[TIDELite] = None,
     ) -> None:
         """Initialize trainer.
         
         Args:
-            model: TIDE-Lite model to train.
             config: Training configuration.
+            model: Optional pre-initialized model.
         """
-        self.model = model
         self.config = config
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
-        # Setup paths
-        self.output_dir = Path(config.output_dir)
-        self.checkpoint_dir = Path(config.checkpoint_dir)
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        # Set random seeds
+        torch.manual_seed(config.seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(config.seed)
         
-        # Setup logging
-        log_file = self.output_dir / "training.log"
-        setup_logging(config.log_level, log_file)
-        
-        # Set seed for reproducibility
-        seed_everything(config.seed)
-        
-        # Move model to device
-        if config.device:
-            self.device = torch.device(config.device)
+        # Initialize model
+        if model is None:
+            model_config = TIDELiteConfig(
+                encoder_name=config.encoder_name,
+                time_encoding_dim=config.time_encoding_dim,
+                mlp_hidden_dim=config.mlp_hidden_dim,
+                mlp_dropout=config.mlp_dropout,
+                gate_activation=config.gate_activation,
+                freeze_encoder=True,  # Always freeze encoder
+                max_seq_length=config.max_seq_length,
+            )
+            self.model = TIDELite(model_config)
         else:
-            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = self.model.to(self.device)
+            self.model = model
         
-        # Initialize components (will be setup in prepare_training)
+        self.model.to(self.device)
+        
+        # Setup output directory
+        if config.output_dir is None:
+            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            config.output_dir = f"results/run-{timestamp}"
+        
+        self.output_dir = Path(config.output_dir)
+        if not config.dry_run:
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Initialize loss function
+        self.loss_fn = TIDELiteLoss(
+            temporal_weight=config.temporal_weight,
+            preservation_weight=config.preservation_weight,
+            tau_seconds=config.tau_seconds,
+        )
+        
+        # Training components (initialized in setup_training)
         self.optimizer = None
         self.scheduler = None
         self.scaler = None
         self.train_loader = None
         self.val_loader = None
+        self.test_loader = None
         
         # Metrics tracking
         self.metrics = {
-            "train_loss": [],
-            "val_loss": [],
-            "val_spearman": [],
-            "learning_rate": [],
-            "epoch_times": [],
+            "train": [],
+            "val": [],
+            "test": [],
         }
-        self.global_step = 0
         
-        logger.info(f"Initialized trainer with device: {self.device}")
-        logger.info(f"Output directory: {self.output_dir}")
+        logger.info(f"Initialized TIDELiteTrainer with device: {self.device}")
+        logger.info(f"Model has {self.model.count_extra_parameters():,} trainable parameters")
     
-    def prepare_data(self) -> Tuple[DataLoader, DataLoader]:
-        """Prepare training and validation dataloaders.
+    def setup_training(self) -> None:
+        """Setup training components: optimizer, scheduler, dataloaders."""
+        # Only optimize temporal MLP parameters
+        trainable_params = [
+            p for p in self.model.temporal_gate.parameters() 
+            if p.requires_grad
+        ]
         
-        Returns:
-            Tuple of (train_loader, val_loader).
-        """
-        logger.info("Loading STS-B dataset with temporal augmentation")
-        
-        # Load dataset
-        dataset_config = DatasetConfig(
-            seed=self.config.seed,
-            cache_dir="./data",
-            timestamp_start="2020-01-01",
-            timestamp_end="2024-01-01",
-            temporal_noise_std=7.0,
-        )
-        
-        datasets = load_stsb_with_timestamps(dataset_config)
-        
-        # Create tokenizer and collator
-        tokenizer = TextBatcher(
-            model_name=self.config.encoder_name,
-            max_length=self.config.max_seq_length,
-        )
-        
-        collator = STSBCollator(tokenizer, include_timestamps=True)
-        
-        # Create dataloaders
-        train_loader = DataLoader(
-            datasets["train"],
-            batch_size=self.config.batch_size,
-            shuffle=True,
-            collate_fn=collator,
-            num_workers=self.config.num_workers,
-            pin_memory=True,
-        )
-        
-        val_loader = DataLoader(
-            datasets["validation"],
-            batch_size=self.config.eval_batch_size,
-            shuffle=False,
-            collate_fn=collator,
-            num_workers=self.config.num_workers,
-            pin_memory=True,
-        )
-        
-        logger.info(
-            f"Prepared dataloaders - Train: {len(train_loader)} batches, "
-            f"Val: {len(val_loader)} batches"
-        )
-        
-        return train_loader, val_loader
-    
-    def prepare_optimizer(self) -> Tuple[torch.optim.Optimizer, Any]:
-        """Prepare optimizer and learning rate scheduler.
-        
-        Returns:
-            Tuple of (optimizer, scheduler).
-        """
-        # Get trainable parameters
-        trainable_params = [p for p in self.model.parameters() if p.requires_grad]
-        
-        logger.info(
-            f"Optimizing {len(trainable_params)} parameter groups "
-            f"({sum(p.numel() for p in trainable_params):,} parameters)"
-        )
-        
-        # Create optimizer
-        optimizer = AdamW(
+        # Optimizer
+        self.optimizer = AdamW(
             trainable_params,
             lr=self.config.learning_rate,
             weight_decay=self.config.weight_decay,
-            eps=1e-8,
         )
         
-        # Create scheduler with warmup + cosine annealing
-        total_steps = len(self.train_loader) * self.config.num_epochs
-        
-        warmup_scheduler = LinearLR(
-            optimizer,
-            start_factor=0.1,
-            total_iters=self.config.warmup_steps,
+        # Scheduler
+        total_steps = self.config.num_epochs * len(self.train_loader) if self.train_loader else 1000
+        self.scheduler = CosineAnnealingLR(
+            self.optimizer,
+            T_max=total_steps,
         )
         
-        cosine_scheduler = CosineAnnealingLR(
-            optimizer,
-            T_max=total_steps - self.config.warmup_steps,
-            eta_min=1e-7,
-        )
-        
-        scheduler = SequentialLR(
-            optimizer,
-            schedulers=[warmup_scheduler, cosine_scheduler],
-            milestones=[self.config.warmup_steps],
-        )
-        
-        logger.info(
-            f"Created optimizer with lr={self.config.learning_rate}, "
-            f"warmup={self.config.warmup_steps}, total_steps={total_steps}"
-        )
-        
-        return optimizer, scheduler
-    
-    def prepare_training(self) -> None:
-        """Prepare all components for training."""
-        # Prepare data
-        self.train_loader, self.val_loader = self.prepare_data()
-        
-        # Prepare optimizer
-        self.optimizer, self.scheduler = self.prepare_optimizer()
-        
-        # Setup mixed precision
+        # Mixed precision scaler
         if self.config.use_amp:
             self.scaler = GradScaler()
-            logger.info("Enabled automatic mixed precision training")
         
-        # Save initial configuration
-        self.save_config()
+        logger.info(f"Setup optimizer with {len(trainable_params)} parameter groups")
     
-    def train_step(
-        self,
-        batch: Dict[str, Any],
-    ) -> Tuple[float, Dict[str, float]]:
-        """Perform single training step.
+    def setup_dataloaders(self) -> None:
+        """Setup dataloaders for STS-B."""
+        logger.info("Setting up STS-B dataloaders")
         
-        Args:
-            batch: Batch from dataloader.
-            
-        Returns:
-            Tuple of (loss, loss_components).
-        """
-        # Move batch to device
-        sent1_inputs = {k: v.to(self.device) for k, v in batch["sentence1_inputs"].items()}
-        sent2_inputs = {k: v.to(self.device) for k, v in batch["sentence2_inputs"].items()}
-        labels = batch["labels"].to(self.device) / 5.0  # Normalize to [0, 1]
-        timestamps1 = batch["timestamps1"].to(self.device)
-        timestamps2 = batch["timestamps2"].to(self.device)
+        data_config = {
+            "cache_dir": self.config.cache_dir,
+            "seed": self.config.seed,
+            "model_name": self.config.encoder_name,
+        }
         
-        # Determine device type for autocast
-        device_type = 'cuda' if self.device.type == 'cuda' else 'cpu'
+        self.train_loader, self.val_loader, self.test_loader = create_stsb_dataloaders(
+            cfg=data_config,
+            batch_size=self.config.batch_size,
+            eval_batch_size=self.config.eval_batch_size,
+            max_seq_length=self.config.max_seq_length,
+            num_workers=self.config.num_workers,
+        )
         
-        # Forward pass with mixed precision
-        with autocast(device_type=device_type, enabled=self.config.use_amp):
-            # Encode both sentences
-            temporal_emb1, base_emb1 = self.model(
-                sent1_inputs["input_ids"],
-                sent1_inputs["attention_mask"],
-                timestamps1,
-            )
-            temporal_emb2, base_emb2 = self.model(
-                sent2_inputs["input_ids"],
-                sent2_inputs["attention_mask"],
-                timestamps2,
-            )
-            
-            # Concatenate for combined loss
-            temporal_emb = torch.cat([temporal_emb1, temporal_emb2], dim=0)
-            base_emb = torch.cat([base_emb1, base_emb2], dim=0)
-            timestamps = torch.cat([timestamps1, timestamps2], dim=0)
-            
-            # Compute combined loss
-            loss, loss_components = combined_tide_loss(
-                temporal_emb,
-                base_emb,
-                timestamps,
-                target_scores=labels,
-                alpha=self.config.temporal_weight,
-                beta=self.config.preservation_weight,
-                tau_seconds=self.config.tau_seconds,
-            )
-        
-        return loss, loss_components
+        logger.info(f"Train batches: {len(self.train_loader)}")
+        logger.info(f"Val batches: {len(self.val_loader)}")
+        logger.info(f"Test batches: {len(self.test_loader)}")
     
     def train_epoch(self, epoch: int) -> Dict[str, float]:
         """Train for one epoch.
@@ -369,12 +239,15 @@ class TIDETrainer:
             epoch: Current epoch number.
             
         Returns:
-            Dictionary of epoch metrics.
+            Dictionary of average metrics for the epoch.
         """
         self.model.train()
-        
-        epoch_losses = []
-        epoch_components = {"task": [], "temporal": [], "preservation": []}
+        epoch_metrics = {
+            "loss": 0.0,
+            "cosine_loss": 0.0,
+            "temporal_loss": 0.0,
+            "preservation_loss": 0.0,
+        }
         
         progress_bar = tqdm(
             self.train_loader,
@@ -382,92 +255,119 @@ class TIDETrainer:
             disable=self.config.dry_run,
         )
         
-        for batch_idx, batch in enumerate(progress_bar):
-            # Training step
-            loss, components = self.train_step(batch)
+        for step, batch in enumerate(progress_bar):
+            # Move batch to device
+            sent1_inputs = {k: v.to(self.device) for k, v in batch["sentence1_inputs"].items()}
+            sent2_inputs = {k: v.to(self.device) for k, v in batch["sentence2_inputs"].items()}
+            labels = batch["labels"].to(self.device)
+            
+            # Generate random timestamps for training
+            batch_size = labels.shape[0]
+            timestamps1 = torch.rand(batch_size, device=self.device) * 1e9  # Random timestamps
+            timestamps2 = timestamps1 + torch.randn(batch_size, device=self.device) * 3600  # ±1 hour
+            
+            # Forward pass with mixed precision
+            with autocast(enabled=self.config.use_amp):
+                # Get embeddings
+                temporal_emb1, base_emb1 = self.model(
+                    sent1_inputs["input_ids"],
+                    sent1_inputs["attention_mask"],
+                    timestamps1,
+                )
+                temporal_emb2, base_emb2 = self.model(
+                    sent2_inputs["input_ids"],
+                    sent2_inputs["attention_mask"],
+                    timestamps2,
+                )
+                
+                # Compute loss
+                loss_dict = self.loss_fn(
+                    temporal_emb1=temporal_emb1,
+                    temporal_emb2=temporal_emb2,
+                    base_emb1=base_emb1,
+                    base_emb2=base_emb2,
+                    timestamps1=timestamps1,
+                    timestamps2=timestamps2,
+                    gold_scores=labels,
+                )
+                
+                loss = loss_dict["total"]
             
             # Backward pass
             self.optimizer.zero_grad()
             
             if self.config.use_amp:
                 self.scaler.scale(loss).backward()
-                
-                # Gradient clipping
-                self.scaler.unscale_(self.optimizer)
-                torch.nn.utils.clip_grad_norm_(
-                    self.model.parameters(),
-                    self.config.gradient_clip,
-                )
-                
+                if self.config.gradient_clip > 0:
+                    self.scaler.unscale_(self.optimizer)
+                    torch.nn.utils.clip_grad_norm_(
+                        self.model.temporal_gate.parameters(),
+                        self.config.gradient_clip,
+                    )
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
             else:
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(
-                    self.model.parameters(),
-                    self.config.gradient_clip,
-                )
+                if self.config.gradient_clip > 0:
+                    torch.nn.utils.clip_grad_norm_(
+                        self.model.temporal_gate.parameters(),
+                        self.config.gradient_clip,
+                    )
                 self.optimizer.step()
             
             self.scheduler.step()
             
-            # Track metrics
-            epoch_losses.append(loss.item())
-            epoch_components["task"].append(components["task_loss"])
-            epoch_components["temporal"].append(components["temporal_loss"])
-            epoch_components["preservation"].append(components["preservation_loss"])
+            # Update metrics
+            for key, value in loss_dict.items():
+                if key == "total":
+                    epoch_metrics["loss"] += value.item()
+                else:
+                    epoch_metrics[key] += value.item()
             
             # Update progress bar
             progress_bar.set_postfix({
-                "loss": f"{loss.item():.4f}",
-                "lr": f"{self.scheduler.get_last_lr()[0]:.2e}",
+                "loss": loss.item(),
+                "lr": self.optimizer.param_groups[0]["lr"],
             })
             
-            self.global_step += 1
-            
-            # Checkpoint if needed
-            if self.global_step % self.config.save_every_n_steps == 0:
-                self.save_checkpoint(f"step_{self.global_step}")
-            
-            # Evaluate if needed
-            if self.global_step % self.config.eval_every_n_steps == 0:
-                val_metrics = self.evaluate()
-                self.model.train()
-                logger.info(f"Step {self.global_step} - Val loss: {val_metrics['loss']:.4f}")
+            # Save checkpoint if needed
+            global_step = epoch * len(self.train_loader) + step
+            if self.config.save_every > 0 and global_step % self.config.save_every == 0:
+                self.save_checkpoint(f"step-{global_step}")
         
-        # Compute epoch statistics
-        epoch_metrics = {
-            "loss": sum(epoch_losses) / len(epoch_losses),
-            "task_loss": sum(epoch_components["task"]) / len(epoch_components["task"]),
-            "temporal_loss": sum(epoch_components["temporal"]) / len(epoch_components["temporal"]),
-            "preservation_loss": sum(epoch_components["preservation"]) / len(epoch_components["preservation"]),
-            "learning_rate": self.scheduler.get_last_lr()[0],
-        }
+        # Average metrics
+        num_batches = len(self.train_loader)
+        for key in epoch_metrics:
+            epoch_metrics[key] /= num_batches
         
         return epoch_metrics
     
     @torch.no_grad()
-    def evaluate(self) -> Dict[str, float]:
-        """Evaluate model on validation set.
+    def evaluate(self, dataloader: DataLoader, split: str = "val") -> Dict[str, float]:
+        """Evaluate on a dataset.
         
+        Args:
+            dataloader: DataLoader to evaluate on.
+            split: Name of the split for logging.
+            
         Returns:
-            Dictionary of validation metrics.
+            Dictionary of evaluation metrics.
         """
         self.model.eval()
+        total_loss = 0.0
+        total_cosine_loss = 0.0
+        num_batches = 0
         
-        val_losses = []
-        val_task_losses = []
-        predictions = []
-        gold_scores = []
-        
-        for batch in tqdm(self.val_loader, desc="Evaluating", disable=self.config.dry_run):
+        for batch in tqdm(dataloader, desc=f"Evaluating {split}", disable=self.config.dry_run):
             # Move batch to device
             sent1_inputs = {k: v.to(self.device) for k, v in batch["sentence1_inputs"].items()}
             sent2_inputs = {k: v.to(self.device) for k, v in batch["sentence2_inputs"].items()}
             labels = batch["labels"].to(self.device)
-            labels_normalized = labels / 5.0  # Normalize to [0, 1] like in training
-            timestamps1 = batch["timestamps1"].to(self.device)
-            timestamps2 = batch["timestamps2"].to(self.device)
+            
+            # Generate timestamps
+            batch_size = labels.shape[0]
+            timestamps1 = torch.rand(batch_size, device=self.device) * 1e9
+            timestamps2 = timestamps1 + torch.randn(batch_size, device=self.device) * 3600
             
             # Forward pass
             temporal_emb1, base_emb1 = self.model(
@@ -481,223 +381,168 @@ class TIDETrainer:
                 timestamps2,
             )
             
-            # Compute cosine similarity for predictions
-            emb1_norm = torch.nn.functional.normalize(temporal_emb1, p=2, dim=1)
-            emb2_norm = torch.nn.functional.normalize(temporal_emb2, p=2, dim=1)
-            cosine_sim = torch.sum(emb1_norm * emb2_norm, dim=1)
-            
-            # Scale back to [0, 5] range
-            pred_scores = (cosine_sim + 1.0) * 2.5
-            
-            predictions.extend(pred_scores.cpu().numpy())
-            gold_scores.extend(labels.cpu().numpy())
-            
-            # Compute same combined loss as in training for fair comparison
-            temporal_emb = torch.cat([temporal_emb1, temporal_emb2], dim=0)
-            base_emb = torch.cat([base_emb1, base_emb2], dim=0)
-            timestamps = torch.cat([timestamps1, timestamps2], dim=0)
-            
-            loss, loss_components = combined_tide_loss(
-                temporal_emb,
-                base_emb,
-                timestamps,
-                target_scores=labels_normalized,
-                alpha=self.config.temporal_weight,
-                beta=self.config.preservation_weight,
-                tau_seconds=self.config.tau_seconds,
-            )
-            val_losses.append(loss.item())
-            val_task_losses.append(loss_components["task_loss"])
-        
-        # Compute Spearman correlation
-        from scipy.stats import spearmanr
-        spearman_corr = spearmanr(predictions, gold_scores)[0]
-        
-        val_metrics = {
-            "loss": sum(val_losses) / len(val_losses),
-            "task_loss": sum(val_task_losses) / len(val_task_losses) if val_task_losses else 0,
-            "spearman": spearman_corr,
-        }
-        
-        return val_metrics
-    
-    def train(self) -> Dict[str, Any]:
-        """Run complete training pipeline.
-        
-        Returns:
-            Dictionary of final metrics and statistics.
-        """
-        if self.config.dry_run:
-            return self.dry_run_summary()
-        
-        logger.info("Starting training")
-        start_time = time.time()
-        
-        # Prepare training
-        self.prepare_training()
-        
-        # Training loop
-        for epoch in range(self.config.num_epochs):
-            epoch_start = time.time()
-            
-            # Train epoch
-            train_metrics = self.train_epoch(epoch)
-            
-            # Evaluate
-            val_metrics = self.evaluate()
-            
-            # Track metrics
-            self.metrics["train_loss"].append(train_metrics["loss"])
-            self.metrics["val_loss"].append(val_metrics["loss"])
-            self.metrics["val_spearman"].append(val_metrics["spearman"])
-            self.metrics["learning_rate"].append(train_metrics["learning_rate"])
-            self.metrics["epoch_times"].append(time.time() - epoch_start)
-            
-            # Log progress
-            logger.info(
-                f"Epoch {epoch+1}/{self.config.num_epochs} - "
-                f"Train loss: {train_metrics['loss']:.4f} (task: {train_metrics['task_loss']:.4f}), "
-                f"Val loss: {val_metrics['loss']:.4f} (task: {val_metrics.get('task_loss', 0):.4f}), "
-                f"Val Spearman: {val_metrics['spearman']:.4f}"
+            # Compute loss
+            loss_dict = self.loss_fn(
+                temporal_emb1=temporal_emb1,
+                temporal_emb2=temporal_emb2,
+                base_emb1=base_emb1,
+                base_emb2=base_emb2,
+                timestamps1=timestamps1,
+                timestamps2=timestamps2,
+                gold_scores=labels,
             )
             
-            # Save checkpoint
-            self.save_checkpoint(f"epoch_{epoch+1}")
-            
-            # Save metrics
-            self.save_metrics()
+            total_loss += loss_dict["total"].item()
+            total_cosine_loss += loss_dict["cosine_loss"].item()
+            num_batches += 1
         
-        # Save final model
-        self.save_checkpoint("final")
-        
-        # Training summary
-        total_time = time.time() - start_time
-        final_metrics = {
-            "total_time_seconds": total_time,
-            "final_train_loss": self.metrics["train_loss"][-1],
-            "final_val_loss": self.metrics["val_loss"][-1],
-            "final_val_spearman": self.metrics["val_spearman"][-1],
-            "best_val_spearman": max(self.metrics["val_spearman"]),
-            "total_steps": self.global_step,
+        return {
+            "loss": total_loss / num_batches,
+            "cosine_loss": total_cosine_loss / num_batches,
         }
-        
-        logger.info(f"Training completed in {total_time/3600:.2f} hours")
-        logger.info(f"Final validation Spearman: {final_metrics['final_val_spearman']:.4f}")
-        
-        return final_metrics
     
-    def save_checkpoint(self, name: str) -> None:
+    def save_checkpoint(self, name: str = "checkpoint") -> None:
         """Save model checkpoint.
         
         Args:
-            name: Checkpoint identifier.
+            name: Name for the checkpoint.
         """
-        checkpoint_path = self.checkpoint_dir / f"checkpoint_{name}.pt"
+        if self.config.dry_run:
+            logger.info(f"[DRY RUN] Would save checkpoint: {name}")
+            return
+        
+        checkpoint_path = self.output_dir / f"{name}.pt"
         
         checkpoint = {
-            "model_state_dict": self.model.state_dict(),
-            "optimizer_state_dict": self.optimizer.state_dict() if self.optimizer else None,
-            "scheduler_state_dict": self.scheduler.state_dict() if self.scheduler else None,
-            "global_step": self.global_step,
-            "metrics": self.metrics,
+            "model_state_dict": self.model.temporal_gate.state_dict(),
+            "optimizer_state_dict": self.optimizer.state_dict(),
+            "scheduler_state_dict": self.scheduler.state_dict(),
             "config": asdict(self.config),
+            "metrics": self.metrics,
         }
         
         torch.save(checkpoint, checkpoint_path)
-        logger.debug(f"Saved checkpoint to {checkpoint_path}")
+        logger.info(f"Saved checkpoint to {checkpoint_path}")
     
     def save_metrics(self) -> None:
         """Save training metrics to JSON."""
+        if self.config.dry_run:
+            logger.info("[DRY RUN] Would save metrics to metrics_train.json")
+            return
+        
         metrics_path = self.output_dir / "metrics_train.json"
         
         with open(metrics_path, "w") as f:
             json.dump(self.metrics, f, indent=2)
         
-        logger.debug(f"Saved metrics to {metrics_path}")
+        logger.info(f"Saved metrics to {metrics_path}")
     
     def save_config(self) -> None:
         """Save configuration used for training."""
+        if self.config.dry_run:
+            logger.info("[DRY RUN] Would save config to config_used.json")
+            return
+        
         config_path = self.output_dir / "config_used.json"
         
         with open(config_path, "w") as f:
             json.dump(asdict(self.config), f, indent=2)
         
-        logger.info(f"Saved configuration to {config_path}")
+        logger.info(f"Saved config to {config_path}")
     
-    def dry_run_summary(self) -> Dict[str, Any]:
-        """Generate dry-run summary without executing training.
-        
-        Returns:
-            Dictionary describing what would be executed.
-        """
-        # Mock data loader creation for step calculation
-        from math import ceil
-        
-        estimated_train_samples = 5749  # STS-B train size
-        estimated_val_samples = 1500    # STS-B validation size
-        
-        steps_per_epoch = ceil(estimated_train_samples / self.config.batch_size)
-        total_steps = steps_per_epoch * self.config.num_epochs
-        
-        # Parameter count
-        param_summary = self.model.get_parameter_summary()
-        
-        # Time estimates (rough)
-        time_per_step = 0.2  # seconds, for small model on GPU
-        estimated_time = total_steps * time_per_step
-        
-        summary = {
-            "dry_run": True,
-            "model": {
-                "encoder": self.config.encoder_name,
-                "trainable_params": param_summary["trainable_params"],
-                "extra_params": param_summary["extra_params"],
-            },
-            "data": {
-                "dataset": "STS-B with synthetic timestamps",
-                "train_samples": estimated_train_samples,
-                "val_samples": estimated_val_samples,
-                "batch_size": self.config.batch_size,
-                "steps_per_epoch": steps_per_epoch,
-            },
-            "training": {
-                "num_epochs": self.config.num_epochs,
-                "total_steps": total_steps,
-                "warmup_steps": self.config.warmup_steps,
-                "learning_rate": self.config.learning_rate,
-                "optimizer": "AdamW",
-                "scheduler": "LinearWarmup + CosineAnnealing",
-            },
-            "loss": {
-                "task_loss": "Cosine Regression (STS-B)",
-                "temporal_weight": self.config.temporal_weight,
-                "preservation_weight": self.config.preservation_weight,
-                "tau_seconds": self.config.tau_seconds,
-            },
-            "compute": {
-                "device": str(self.device),
-                "mixed_precision": self.config.use_amp,
-                "estimated_time_seconds": estimated_time,
-                "estimated_time_hours": estimated_time / 3600,
-            },
-            "outputs": {
-                "output_dir": str(self.output_dir),
-                "checkpoint_dir": str(self.checkpoint_dir),
-                "checkpoint_frequency": self.config.save_every_n_steps,
-                "eval_frequency": self.config.eval_every_n_steps,
-            },
-        }
-        
-        # Print summary
+    def train(self) -> None:
+        """Main training loop."""
         logger.info("=" * 60)
-        logger.info("DRY RUN SUMMARY - No training will be performed")
-        logger.info("=" * 60)
-        logger.info(json.dumps(summary, indent=2))
+        logger.info("Starting TIDE-Lite Training")
         logger.info("=" * 60)
         
-        # Save summary
-        summary_path = self.output_dir / "dry_run_summary.json"
-        with open(summary_path, "w") as f:
-            json.dump(summary, f, indent=2)
+        if self.config.dry_run:
+            logger.info("[DRY RUN MODE] Printing training plan:")
+            logger.info(f"  Model: {self.config.encoder_name}")
+            logger.info(f"  Trainable params: {self.model.count_extra_parameters():,}")
+            logger.info(f"  Epochs: {self.config.num_epochs}")
+            logger.info(f"  Batch size: {self.config.batch_size}")
+            logger.info(f"  Learning rate: {self.config.learning_rate}")
+            logger.info(f"  Output dir: {self.output_dir}")
+            logger.info("  Would train temporal MLP on STS-B dataset")
+            logger.info("  Would save checkpoints and metrics")
+            logger.info("Exiting dry run.")
+            return
         
-        return summary
+        # Setup dataloaders and training components
+        self.setup_dataloaders()
+        self.setup_training()
+        
+        # Save initial configuration
+        self.save_config()
+        
+        # Training loop
+        best_val_loss = float("inf")
+        
+        for epoch in range(self.config.num_epochs):
+            logger.info(f"\nEpoch {epoch + 1}/{self.config.num_epochs}")
+            
+            # Train
+            train_metrics = self.train_epoch(epoch)
+            self.metrics["train"].append({
+                "epoch": epoch + 1,
+                **train_metrics,
+            })
+            
+            logger.info(
+                f"Train - Loss: {train_metrics['loss']:.4f}, "
+                f"Cosine: {train_metrics['cosine_loss']:.4f}"
+            )
+            
+            # Validate
+            val_metrics = self.evaluate(self.val_loader, "val")
+            self.metrics["val"].append({
+                "epoch": epoch + 1,
+                **val_metrics,
+            })
+            
+            logger.info(
+                f"Val - Loss: {val_metrics['loss']:.4f}, "
+                f"Cosine: {val_metrics['cosine_loss']:.4f}"
+            )
+            
+            # Save best model
+            if val_metrics["loss"] < best_val_loss:
+                best_val_loss = val_metrics["loss"]
+                self.save_checkpoint("best")
+                logger.info("Saved best model")
+            
+            # Save epoch checkpoint
+            self.save_checkpoint(f"epoch-{epoch + 1}")
+        
+        # Final evaluation on test set
+        test_metrics = self.evaluate(self.test_loader, "test")
+        self.metrics["test"].append(test_metrics)
+        
+        logger.info(
+            f"\nTest - Loss: {test_metrics['loss']:.4f}, "
+            f"Cosine: {test_metrics['cosine_loss']:.4f}"
+        )
+        
+        # Save final results
+        self.save_metrics()
+        self.model.save_pretrained(self.output_dir / "final_model")
+        
+        logger.info("=" * 60)
+        logger.info("Training Complete!")
+        logger.info(f"Results saved to: {self.output_dir}")
+        logger.info("=" * 60)
+
+
+def train_tide_lite(config: TrainingConfig) -> TIDELite:
+    """Convenience function to train TIDE-Lite.
+    
+    Args:
+        config: Training configuration.
+        
+    Returns:
+        Trained TIDE-Lite model.
+    """
+    trainer = TIDELiteTrainer(config)
+    trainer.train()
+    return trainer.model

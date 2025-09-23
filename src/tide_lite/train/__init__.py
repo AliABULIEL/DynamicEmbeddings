@@ -3,14 +3,25 @@
 from .losses import (
     cosine_regression_loss,
     temporal_consistency_loss,
+    preservation_loss,
     combined_tide_loss,
+    TIDELiteLoss,
 )
-from .trainer import TIDETrainer, TrainingConfig
+from .trainer import (
+    TIDELiteTrainer,
+    TrainingConfig,
+    train_tide_lite,
+)
 
 __all__ = [
+    # Losses
     "cosine_regression_loss",
     "temporal_consistency_loss",
+    "preservation_loss",
     "combined_tide_loss",
-    "TIDETrainer",
+    "TIDELiteLoss",
+    # Trainer
+    "TIDELiteTrainer",
     "TrainingConfig",
+    "train_tide_lite",
 ]
