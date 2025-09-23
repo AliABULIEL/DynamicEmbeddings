@@ -79,9 +79,14 @@ def temporal_consistency_loss(
     # Shape: [batch_size, batch_size]
     similarity_matrix = torch.matmul(embeddings_norm, embeddings_norm.t())
     
-    # Ensure timestamps are 1D
+    # Ensure timestamps are 1D and handle potential shape issues
     if timestamps.dim() > 1:
         timestamps = timestamps.squeeze()
+    
+    # Add dimension check
+    if timestamps.dim() != 1 or timestamps.shape[0] != batch_size:
+        logger.warning(f"Unexpected timestamp shape: {timestamps.shape}, expected ({batch_size},)")
+        timestamps = timestamps.view(batch_size)
     
     # Compute pairwise time differences with safe broadcasting
     # Shape: [batch_size, 1] - [1, batch_size] = [batch_size, batch_size]
