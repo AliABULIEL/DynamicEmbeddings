@@ -1,0 +1,45 @@
+# Balanced training configuration for TIDE-Lite
+# This configuration addresses the loss imbalance issues
+
+# Model configuration
+encoder_name: "sentence-transformers/all-MiniLM-L6-v2"
+hidden_dim: 384
+time_encoding_dim: 32
+mlp_hidden_dim: 128
+mlp_dropout: 0.1
+freeze_encoder: true
+pooling_strategy: "mean"
+gate_activation: "sigmoid"
+
+# Data configuration
+batch_size: 128
+eval_batch_size: 256
+max_seq_length: 128
+num_workers: 4
+
+# Training configuration
+num_epochs: 15
+learning_rate: 3e-5
+warmup_steps: 500
+weight_decay: 0.01
+gradient_clip: 1.0
+
+# Loss weights - ADJUSTED FOR BALANCE
+# These weights are crucial for proper training
+temporal_weight: 0.01  # Reduced from 0.1 to avoid dominating
+preservation_weight: 0.005  # Reduced from 0.05
+tau_seconds: 86400.0  # 1 day
+
+# Mixed precision
+use_amp: true
+
+# Checkpointing
+save_every_n_steps: 100
+eval_every_n_steps: 100
+
+# Paths
+output_dir: "results/balanced_run"
+
+# Misc
+seed: 42
+log_level: "INFO"

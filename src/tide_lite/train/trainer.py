@@ -455,6 +455,7 @@ class TIDETrainer:
         self.model.eval()
         
         val_losses = []
+        val_task_losses = []
         predictions = []
         gold_scores = []
         
@@ -463,22 +464,23 @@ class TIDETrainer:
             sent1_inputs = {k: v.to(self.device) for k, v in batch["sentence1_inputs"].items()}
             sent2_inputs = {k: v.to(self.device) for k, v in batch["sentence2_inputs"].items()}
             labels = batch["labels"].to(self.device)
+            labels_normalized = labels / 5.0  # Normalize to [0, 1] like in training
             timestamps1 = batch["timestamps1"].to(self.device)
             timestamps2 = batch["timestamps2"].to(self.device)
             
             # Forward pass
-            temporal_emb1, _ = self.model(
+            temporal_emb1, base_emb1 = self.model(
                 sent1_inputs["input_ids"],
                 sent1_inputs["attention_mask"],
                 timestamps1,
             )
-            temporal_emb2, _ = self.model(
+            temporal_emb2, base_emb2 = self.model(
                 sent2_inputs["input_ids"],
                 sent2_inputs["attention_mask"],
                 timestamps2,
             )
             
-            # Compute cosine similarity
+            # Compute cosine similarity for predictions
             emb1_norm = torch.nn.functional.normalize(temporal_emb1, p=2, dim=1)
             emb2_norm = torch.nn.functional.normalize(temporal_emb2, p=2, dim=1)
             cosine_sim = torch.sum(emb1_norm * emb2_norm, dim=1)
@@ -489,9 +491,22 @@ class TIDETrainer:
             predictions.extend(pred_scores.cpu().numpy())
             gold_scores.extend(labels.cpu().numpy())
             
-            # Compute loss
-            loss = cosine_regression_loss(temporal_emb1, temporal_emb2, labels)
+            # Compute same combined loss as in training for fair comparison
+            temporal_emb = torch.cat([temporal_emb1, temporal_emb2], dim=0)
+            base_emb = torch.cat([base_emb1, base_emb2], dim=0)
+            timestamps = torch.cat([timestamps1, timestamps2], dim=0)
+            
+            loss, loss_components = combined_tide_loss(
+                temporal_emb,
+                base_emb,
+                timestamps,
+                target_scores=labels_normalized,
+                alpha=self.config.temporal_weight,
+                beta=self.config.preservation_weight,
+                tau_seconds=self.config.tau_seconds,
+            )
             val_losses.append(loss.item())
+            val_task_losses.append(loss_components["task_loss"])
         
         # Compute Spearman correlation
         from scipy.stats import spearmanr
@@ -499,6 +514,7 @@ class TIDETrainer:
         
         val_metrics = {
             "loss": sum(val_losses) / len(val_losses),
+            "task_loss": sum(val_task_losses) / len(val_task_losses) if val_task_losses else 0,
             "spearman": spearman_corr,
         }
         
@@ -539,8 +555,8 @@ class TIDETrainer:
             # Log progress
             logger.info(
                 f"Epoch {epoch+1}/{self.config.num_epochs} - "
-                f"Train loss: {train_metrics['loss']:.4f}, "
-                f"Val loss: {val_metrics['loss']:.4f}, "
+                f"Train loss: {train_metrics['loss']:.4f} (task: {train_metrics['task_loss']:.4f}), "
+                f"Val loss: {val_metrics['loss']:.4f} (task: {val_metrics.get('task_loss', 0):.4f}), "
                 f"Val Spearman: {val_metrics['spearman']:.4f}"
             )
             
