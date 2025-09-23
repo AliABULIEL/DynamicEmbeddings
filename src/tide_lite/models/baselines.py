@@ -98,6 +98,44 @@ class BaselineEncoder(nn.Module):
             raise ValueError(f"Unknown pooling strategy: {self.pooling_strategy}")
         
         return embeddings
+
+
+def load_baseline(
+    model_id: str,
+    max_seq_length: int = 128,
+    pooling: str = "mean",
+) -> BaselineEncoder:
+    """Load a baseline model by ID.
+    
+    Args:
+        model_id: Model identifier ('minilm', 'e5-base', 'bge-base').
+        max_seq_length: Maximum sequence length.
+        pooling: Pooling strategy.
+        
+    Returns:
+        Baseline encoder model.
+    """
+    model_map = {
+        "minilm": "sentence-transformers/all-MiniLM-L6-v2",
+        "e5-base": "intfloat/e5-base-v2",
+        "bge-base": "BAAI/bge-base-en-v1.5",
+    }
+    
+    if model_id not in model_map:
+        raise ValueError(
+            f"Unknown baseline model: {model_id}. "
+            f"Available: {list(model_map.keys())}"
+        )
+    
+    model_name = model_map[model_id]
+    logger.info(f"Loading baseline {model_id}: {model_name}")
+    
+    return BaselineEncoder(
+        model_name=model_name,
+        pooling_strategy=pooling,
+        freeze=True,
+        max_seq_length=max_seq_length,
+    )
     
     def encode_base(
         self,
