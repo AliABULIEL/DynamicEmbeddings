@@ -11,7 +11,15 @@ from typing import Dict, Tuple
 import numpy as np
 import torch
 # Add numpy arrays to safe globals for PyTorch 2.6+
-torch.serialization.add_safe_globals([np.core.multiarray.scalar])
+try:
+    # Try new numpy API first
+    torch.serialization.add_safe_globals([np._core.multiarray.scalar])
+except (AttributeError, ImportError):
+    # Fall back to old API for older numpy versions
+    try:
+        torch.serialization.add_safe_globals([np.core.multiarray.scalar])
+    except:
+        pass  # Ignore if both fail
 from scipy.stats import spearmanr, pearsonr
 from sklearn.metrics.pairwise import cosine_similarity
 from tqdm import tqdm
@@ -102,33 +110,68 @@ def load_checkpoint_model(checkpoint_path):
     # Fix for PyTorch 2.6+: explicitly set weights_only=False for numpy arrays
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     
-    # Extract config
-    if "config" in checkpoint:
-        config_dict = checkpoint["config"]
+    # First, try to extract dimensions from the actual checkpoint weights
+    # This ensures compatibility even if config is missing or incorrect
+    if "model_state_dict" in checkpoint:
+        state_dict = checkpoint["model_state_dict"]
+    elif "temporal_gate_state_dict" in checkpoint:
+        state_dict = checkpoint["temporal_gate_state_dict"]
     else:
-        # Use defaults
-        config_dict = {
-            "encoder_name": "sentence-transformers/all-MiniLM-L6-v2",
-            "hidden_dim": 384,
-            "time_encoding_dim": 32,
-            "mlp_hidden_dim": 128,
-            "mlp_dropout": 0.1,
-            "gate_activation": "sigmoid",
-            "freeze_encoder": True,
-            "pooling_strategy": "mean"
-        }
+        state_dict = checkpoint
+    
+    # Infer dimensions from checkpoint weights
+    time_encoding_dim = None
+    mlp_hidden_dim = None
+    hidden_dim = 384  # Default
+    
+    for key, value in state_dict.items():
+        if "time_encoder.scales" in key or "scales" in key:
+            time_encoding_dim = value.shape[0]
+        if "temporal_gate.mlp.0.weight" in key or "mlp.0.weight" in key:
+            mlp_hidden_dim = value.shape[0]
+            time_encoding_dim = time_encoding_dim or value.shape[1]
+        if "temporal_gate.mlp.3.weight" in key or "mlp.3.weight" in key or "temporal_gate.mlp.2.weight" in key:
+            hidden_dim = value.shape[0]
+    
+    # Use inferred dimensions or defaults
+    if time_encoding_dim is None:
+        time_encoding_dim = 64 if "config" in checkpoint and checkpoint.get("config", {}).get("time_encoding_dim") == 64 else 32
+    if mlp_hidden_dim is None:
+        mlp_hidden_dim = 256 if "config" in checkpoint and checkpoint.get("config", {}).get("mlp_hidden_dim") == 256 else 128
+    
+    # Build config with correct dimensions
+    config_dict = {
+        "encoder_name": "sentence-transformers/all-MiniLM-L6-v2",
+        "hidden_dim": hidden_dim,
+        "time_encoding_dim": time_encoding_dim,
+        "mlp_hidden_dim": mlp_hidden_dim,
+        "mlp_dropout": 0.1,
+        "gate_activation": "sigmoid",
+        "freeze_encoder": True,
+        "pooling_strategy": "mean"
+    }
+    
+    # Override with checkpoint config if available
+    if "config" in checkpoint:
+        for key, value in checkpoint["config"].items():
+            if key in config_dict:
+                config_dict[key] = value
     
     # Create model config
     model_config = TIDELiteConfig(**{k: v for k, v in config_dict.items() if k in TIDELiteConfig.__dataclass_fields__})
     
-    # Initialize model
+    # Initialize model with correct architecture
     model = TIDELite(model_config)
     
     # Load weights
     if "model_state_dict" in checkpoint:
         model.load_state_dict(checkpoint["model_state_dict"])
     elif "temporal_gate_state_dict" in checkpoint:
+        # Only load temporal gate weights
         model.temporal_gate.load_state_dict(checkpoint["temporal_gate_state_dict"])
+    else:
+        # Try loading as full state dict
+        model.load_state_dict(checkpoint)
     
     return model
 
