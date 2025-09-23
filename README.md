@@ -16,13 +16,13 @@ TIDE-Lite provides a unified CLI that defaults to dry-run mode (shows plans with
 # Show help and available commands
 python -m tide_lite.cli.tide --help
 
-# Training (dry-run by default)
+# Training (dry-run by default - shows plan)
 python -m tide_lite.cli.tide train --output-dir results/run1
 
 # Actually execute with --run flag
 python -m tide_lite.cli.tide train --output-dir results/run1 --run
 
-# Evaluate on single benchmark
+# Evaluate on single benchmark (dry-run)
 python -m tide_lite.cli.tide eval-stsb --model results/run1/checkpoints/final.pt
 python -m tide_lite.cli.tide eval-quora --model results/run1/checkpoints/final.pt
 python -m tide_lite.cli.tide eval-temporal --model results/run1/checkpoints/final.pt
@@ -35,16 +35,29 @@ python -m tide_lite.cli.tide bench-all --model minilm --type baseline
 python -m tide_lite.cli.tide bench-all --model e5-base --type baseline
 python -m tide_lite.cli.tide bench-all --model bge-base --type baseline
 
-# Run ablation study
+# Run ablation study (grid search over hyperparameters)
 python -m tide_lite.cli.tide ablation \
     --time-mlp-hidden 64,128,256 \
     --consistency-weight 0.05,0.1,0.2 \
-    --time-encoding sinusoidal,learnable,none
+    --time-encoding sinusoidal,learnable
 
 # Aggregate results and generate report
 python -m tide_lite.cli.tide aggregate --results-dir results/
-python -m tide_lite.cli.tide report --input results/summary.json
+python -m tide_lite.cli.tide report --input results/summary.json --output-dir reports/
 ```
+
+#### CLI Subcommands
+
+- `train`: Train TIDE-Lite model on STS-B
+- `eval-stsb`: Evaluate semantic similarity on STS-B
+- `eval-quora`: Evaluate retrieval on Quora duplicate questions
+- `eval-temporal`: Evaluate temporal understanding with TimeQA/TempLAMA
+- `bench-all`: Run all three evaluations for a model
+- `ablation`: Grid search over hyperparameters
+- `aggregate`: Merge all metrics into summary.json/csv
+- `report`: Generate markdown report with plots
+
+**Note**: All commands default to `--dry-run` mode. Add `--run` flag to actually execute.
 
 ### 1️⃣ CPU Smoke Test (2-5 min)
 ```bash

@@ -111,15 +111,7 @@ class TIDEOrchestrator:
 
 
 def cmd_train(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> int:
-    """Handle train subcommand.
-    
-    Args:
-        args: Parsed arguments.
-        orchestrator: Orchestrator instance.
-        
-    Returns:
-        Exit code.
-    """
+    """Handle train subcommand."""
     cmd = ["python", "-m", "tide_lite.cli.train"]
     
     if args.config:
@@ -151,15 +143,7 @@ def cmd_train(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> int:
 
 
 def cmd_eval_stsb(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> int:
-    """Handle eval-stsb subcommand.
-    
-    Args:
-        args: Parsed arguments.
-        orchestrator: Orchestrator instance.
-        
-    Returns:
-        Exit code.
-    """
+    """Handle eval-stsb subcommand."""
     cmd = ["python", "-m", "tide_lite.cli.eval_stsb"]
     
     cmd.extend(["--model", str(args.model)])
@@ -170,8 +154,6 @@ def cmd_eval_stsb(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> i
         cmd.extend(["--output-dir", str(args.output_dir)])
     if args.split:
         cmd.extend(["--split", args.split])
-    if args.batch_size:
-        cmd.extend(["--batch-size", str(args.batch_size)])
     
     if not orchestrator.dry_run:
         cmd.append("--run")
@@ -190,15 +172,7 @@ def cmd_eval_stsb(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> i
 
 
 def cmd_eval_quora(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> int:
-    """Handle eval-quora subcommand.
-    
-    Args:
-        args: Parsed arguments.
-        orchestrator: Orchestrator instance.
-        
-    Returns:
-        Exit code.
-    """
+    """Handle eval-quora subcommand."""
     cmd = ["python", "-m", "tide_lite.cli.eval_quora"]
     
     cmd.extend(["--model", str(args.model)])
@@ -231,15 +205,7 @@ def cmd_eval_quora(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> 
 
 
 def cmd_eval_temporal(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> int:
-    """Handle eval-temporal subcommand.
-    
-    Args:
-        args: Parsed arguments.
-        orchestrator: Orchestrator instance.
-        
-    Returns:
-        Exit code.
-    """
+    """Handle eval-temporal subcommand."""
     cmd = ["python", "-m", "tide_lite.cli.eval_temporal"]
     
     cmd.extend(["--model", str(args.model)])
@@ -250,8 +216,6 @@ def cmd_eval_temporal(args: argparse.Namespace, orchestrator: TIDEOrchestrator) 
         cmd.extend(["--output-dir", str(args.output_dir)])
     if args.time_window_days:
         cmd.extend(["--time-window-days", str(args.time_window_days)])
-    if args.max_samples:
-        cmd.extend(["--max-samples", str(args.max_samples)])
     
     if not orchestrator.dry_run:
         cmd.append("--run")
@@ -270,15 +234,7 @@ def cmd_eval_temporal(args: argparse.Namespace, orchestrator: TIDEOrchestrator) 
 
 
 def cmd_bench_all(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> int:
-    """Handle bench-all subcommand - runs all three evaluations.
-    
-    Args:
-        args: Parsed arguments.
-        orchestrator: Orchestrator instance.
-        
-    Returns:
-        Exit code.
-    """
+    """Handle bench-all subcommand - runs all three evaluations."""
     output_dir = args.output_dir or Path("results")
     model_type = args.type or ("baseline" if args.model in ["minilm", "e5-base", "bge-base"] else "tide_lite")
     
@@ -287,7 +243,6 @@ def cmd_bench_all(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> i
     cmd_stsb.extend(["--model", str(args.model)])
     cmd_stsb.extend(["--type", model_type])
     cmd_stsb.extend(["--output-dir", str(output_dir)])
-    cmd_stsb.extend(["--split", args.split or "test"])
     if not orchestrator.dry_run:
         cmd_stsb.append("--run")
     
@@ -302,16 +257,15 @@ def cmd_bench_all(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> i
     cmd_quora.extend(["--model", str(args.model)])
     cmd_quora.extend(["--type", model_type])
     cmd_quora.extend(["--output-dir", str(output_dir)])
-    cmd_quora.extend(["--index-type", "Flat"])
-    cmd_quora.extend(["--max-corpus", str(args.max_corpus or 10000)])
-    cmd_quora.extend(["--max-queries", str(args.max_queries or 1000)])
+    cmd_quora.extend(["--max-corpus", "10000"])
+    cmd_quora.extend(["--max-queries", "1000"])
     if not orchestrator.dry_run:
         cmd_quora.append("--run")
     
     orchestrator.add_command(
         "bench-quora",
         cmd_quora,
-        "Benchmark on Quora duplicate questions retrieval"
+        "Benchmark on Quora retrieval"
     )
     
     # Temporal evaluation
@@ -319,7 +273,6 @@ def cmd_bench_all(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> i
     cmd_temporal.extend(["--model", str(args.model)])
     cmd_temporal.extend(["--type", model_type])
     cmd_temporal.extend(["--output-dir", str(output_dir)])
-    cmd_temporal.extend(["--time-window-days", "30"])
     if not orchestrator.dry_run:
         cmd_temporal.append("--run")
     
@@ -333,15 +286,7 @@ def cmd_bench_all(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> i
 
 
 def cmd_ablation(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> int:
-    """Handle ablation subcommand - parameter grid search.
-    
-    Args:
-        args: Parsed arguments.
-        orchestrator: Orchestrator instance.
-        
-    Returns:
-        Exit code.
-    """
+    """Handle ablation subcommand - parameter grid search."""
     # Parse parameter ranges
     mlp_hidden_dims = [int(x) for x in args.time_mlp_hidden.split(",")]
     consistency_weights = [float(x) for x in args.consistency_weight.split(",")]
@@ -353,12 +298,12 @@ def cmd_ablation(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> in
     combinations = list(product(mlp_hidden_dims, consistency_weights, time_encodings))
     
     print(f"\nAblation study: {len(combinations)} configurations")
-    print(f"Time MLP hidden dims: {mlp_hidden_dims}")
+    print(f"MLP hidden dims: {mlp_hidden_dims}")
     print(f"Consistency weights: {consistency_weights}")
     print(f"Time encodings: {time_encodings}")
     
-    for i, (mlp_dim, cons_weight, time_enc) in enumerate(combinations, 1):
-        run_name = f"ablation_mlp{mlp_dim}_cw{cons_weight}_enc{time_enc}"
+    for i, (mlp_dim, weight, encoding) in enumerate(combinations, 1):
+        run_name = f"ablation_mlp{mlp_dim}_w{weight}_enc{encoding}"
         output_dir = output_base / run_name
         
         # Training command
@@ -366,9 +311,9 @@ def cmd_ablation(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> in
             "python", "-m", "tide_lite.cli.train",
             "--output-dir", str(output_dir),
             "--time-mlp-hidden", str(mlp_dim),
-            "--consistency-weight", str(cons_weight),
-            "--time-encoding", time_enc,
-            "--num-epochs", str(args.num_epochs or 1),
+            "--consistency-weight", str(weight),
+            "--time-encoding", encoding,
+            "--num-epochs", "1",  # Quick ablation
         ]
         if not orchestrator.dry_run:
             cmd_train.append("--run")
@@ -376,13 +321,13 @@ def cmd_ablation(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> in
         orchestrator.add_command(
             f"ablation-train-{i}",
             cmd_train,
-            f"Config {i}/{len(combinations)}: mlp={mlp_dim}, cw={cons_weight}, enc={time_enc}"
+            f"Config {i}/{len(combinations)}: mlp={mlp_dim}, weight={weight}, enc={encoding}"
         )
         
-        # Evaluation command (just STS-B for ablation)
+        # Evaluation command (STS-B validation)
         cmd_eval = [
             "python", "-m", "tide_lite.cli.eval_stsb",
-            "--model", str(output_dir / "checkpoints" / "final.pt"),
+            "--model", str(output_dir / "checkpoints" / "best_model.pt"),
             "--output-dir", str(output_dir),
             "--split", "validation",
         ]
@@ -395,34 +340,26 @@ def cmd_ablation(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> in
             f"Evaluate config {i}/{len(combinations)}"
         )
     
-    # Aggregate ablation results
-    cmd_aggregate = [
+    # Save ablation results summary
+    cmd_summary = [
         "python", "-m", "tide_lite.cli.aggregate",
         "--results-dir", str(output_base),
-        "--output", str(output_base / "ablation_results.json"),
+        "--output", str(output_base / "ablation_summary.json"),
     ]
     if not orchestrator.dry_run:
-        cmd_aggregate.append("--run")
+        cmd_summary.append("--run")
     
     orchestrator.add_command(
-        "ablation-aggregate",
-        cmd_aggregate,
-        "Aggregate ablation study results"
+        "ablation-summary",
+        cmd_summary,
+        "Aggregate ablation results"
     )
     
     return orchestrator.execute_plan()
 
 
 def cmd_aggregate(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> int:
-    """Handle aggregate subcommand - collect all results.
-    
-    Args:
-        args: Parsed arguments.
-        orchestrator: Orchestrator instance.
-        
-    Returns:
-        Exit code.
-    """
+    """Handle aggregate subcommand - collect all results."""
     cmd = ["python", "-m", "tide_lite.cli.aggregate"]
     
     if args.results_dir:
@@ -433,28 +370,18 @@ def cmd_aggregate(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> i
     if not orchestrator.dry_run:
         cmd.append("--run")
     
-    output_file = args.output or Path(args.results_dir or "results") / "summary.json"
-    
     orchestrator.add_command(
         "aggregate",
         cmd,
-        "Aggregate all evaluation results",
-        str(output_file)
+        "Aggregate all metrics into summary",
+        str(args.output or Path("results/summary.json"))
     )
     
     return orchestrator.execute_plan()
 
 
 def cmd_report(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> int:
-    """Handle report subcommand - generate markdown report.
-    
-    Args:
-        args: Parsed arguments.
-        orchestrator: Orchestrator instance.
-        
-    Returns:
-        Exit code.
-    """
+    """Handle report subcommand - generate markdown report."""
     cmd = ["python", "-m", "tide_lite.cli.report"]
     
     if args.input:
@@ -470,7 +397,7 @@ def cmd_report(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> int:
     orchestrator.add_command(
         "report",
         cmd,
-        "Generate markdown report with figures",
+        "Generate markdown report and plots",
         str(output_dir / "report.md")
     )
     
@@ -478,31 +405,11 @@ def cmd_report(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> int:
 
 
 def setup_parser() -> argparse.ArgumentParser:
-    """Setup argument parser with subcommands.
-    
-    Returns:
-        Configured ArgumentParser.
-    """
+    """Setup argument parser with subcommands."""
     parser = argparse.ArgumentParser(
         prog="tide",
         description="TIDE-Lite unified orchestrator for training and evaluation",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Default dry-run mode - shows plan without execution
-  tide train --config configs/defaults.yaml
-  tide bench-all --model minilm
-  
-  # Actually execute with --run flag
-  tide train --config configs/defaults.yaml --run
-  tide bench-all --model path/to/model.pt --run
-  
-  # Complete pipeline
-  tide train --output-dir results/run1 --run
-  tide bench-all --model results/run1/checkpoints/final.pt --run
-  tide aggregate --results-dir results/ --run
-  tide report --input results/summary.json --run
-        """,
     )
     
     # Global arguments
@@ -516,13 +423,7 @@ Examples:
     parser.add_argument(
         "--run",
         action="store_true",
-        help="Actually execute commands (overrides --dry-run)",
-    )
-    
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Enable verbose output",
+        help="Actually execute commands",
     )
     
     # Subcommands
@@ -535,19 +436,18 @@ Examples:
     train_parser.add_argument("--batch-size", type=int, help="Batch size")
     train_parser.add_argument("--learning-rate", type=float, help="Learning rate")
     train_parser.add_argument("--num-epochs", type=int, help="Number of epochs")
-    train_parser.add_argument("--consistency-weight", type=float, help="Consistency loss weight")
+    train_parser.add_argument("--consistency-weight", type=float, help="Temporal consistency weight")
     
     # Eval-STSB subcommand
     stsb_parser = subparsers.add_parser("eval-stsb", help="Evaluate on STS-B")
-    stsb_parser.add_argument("--model", type=str, required=True, help="Model path or ID")
+    stsb_parser.add_argument("--model", required=True, help="Model path or ID")
     stsb_parser.add_argument("--type", choices=["tide_lite", "baseline"], help="Model type")
     stsb_parser.add_argument("--output-dir", type=Path, help="Output directory")
     stsb_parser.add_argument("--split", choices=["validation", "test"], help="Dataset split")
-    stsb_parser.add_argument("--batch-size", type=int, help="Batch size")
     
     # Eval-Quora subcommand
     quora_parser = subparsers.add_parser("eval-quora", help="Evaluate on Quora retrieval")
-    quora_parser.add_argument("--model", type=str, required=True, help="Model path or ID")
+    quora_parser.add_argument("--model", required=True, help="Model path or ID")
     quora_parser.add_argument("--type", choices=["tide_lite", "baseline"], help="Model type")
     quora_parser.add_argument("--output-dir", type=Path, help="Output directory")
     quora_parser.add_argument("--index-type", choices=["Flat", "IVF"], help="FAISS index type")
@@ -556,20 +456,16 @@ Examples:
     
     # Eval-Temporal subcommand
     temporal_parser = subparsers.add_parser("eval-temporal", help="Evaluate temporal understanding")
-    temporal_parser.add_argument("--model", type=str, required=True, help="Model path or ID")
+    temporal_parser.add_argument("--model", required=True, help="Model path or ID")
     temporal_parser.add_argument("--type", choices=["tide_lite", "baseline"], help="Model type")
     temporal_parser.add_argument("--output-dir", type=Path, help="Output directory")
     temporal_parser.add_argument("--time-window-days", type=float, help="Time window in days")
-    temporal_parser.add_argument("--max-samples", type=int, help="Max samples")
     
     # Bench-all subcommand
     bench_parser = subparsers.add_parser("bench-all", help="Run all evaluations")
-    bench_parser.add_argument("--model", type=str, required=True, help="Model path or ID")
+    bench_parser.add_argument("--model", required=True, help="Model path or ID")
     bench_parser.add_argument("--type", choices=["tide_lite", "baseline"], help="Model type")
     bench_parser.add_argument("--output-dir", type=Path, help="Output directory")
-    bench_parser.add_argument("--split", choices=["validation", "test"], help="Dataset split")
-    bench_parser.add_argument("--max-corpus", type=int, help="Max corpus for Quora")
-    bench_parser.add_argument("--max-queries", type=int, help="Max queries for Quora")
     
     # Ablation subcommand
     ablation_parser = subparsers.add_parser("ablation", help="Run ablation study")
@@ -588,15 +484,14 @@ Examples:
     ablation_parser.add_argument(
         "--time-encoding",
         type=str,
-        default="sinusoidal,learnable,none",
+        default="sinusoidal,learnable",
         help="Comma-separated time encoding types"
     )
     ablation_parser.add_argument("--output-dir", type=Path, help="Output directory")
-    ablation_parser.add_argument("--num-epochs", type=int, default=1, help="Epochs per config")
     
     # Aggregate subcommand
     aggregate_parser = subparsers.add_parser("aggregate", help="Aggregate results")
-    aggregate_parser.add_argument("--results-dir", type=Path, help="Results directory")
+    aggregate_parser.add_argument("--results-dir", type=Path, default=Path("results"), help="Results directory")
     aggregate_parser.add_argument("--output", type=Path, help="Output file")
     
     # Report subcommand
@@ -608,11 +503,7 @@ Examples:
 
 
 def main() -> int:
-    """Main entry point for unified orchestrator.
-    
-    Returns:
-        Exit code.
-    """
+    """Main entry point for unified orchestrator."""
     parser = setup_parser()
     args = parser.parse_args()
     
@@ -622,12 +513,12 @@ def main() -> int:
     
     # Setup logging
     logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
+        level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
     
-    # Create orchestrator with dry_run default, overridden by --run
-    orchestrator = TIDEOrchestrator(dry_run=args.dry_run, run=args.run)
+    # Create orchestrator (dry-run by default unless --run is specified)
+    orchestrator = TIDEOrchestrator(dry_run=not args.run, run=args.run)
     
     # Dispatch to appropriate handler
     handlers = {
