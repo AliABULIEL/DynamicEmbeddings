@@ -1,68 +1,84 @@
 """Command-line interface for TIDE-Lite training.
 
-This module provides the argparse-based CLI for training TIDE-Lite models
-with support for configuration files and command-line overrides.
+This module provides the CLI for training TIDE-Lite models using the unified
+configuration system.
 """
 
 import argparse
-import json
 import logging
 import sys
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
-
-import yaml
+from typing import Dict, Any
 
 from ..models.tide_lite import TIDELite, TIDELiteConfig
-from ..train.trainer import TIDETrainer, TrainingConfig
+from ..train.trainer import TIDETrainer, TrainingConfig  
+from ..utils.config import ConfigLoader, TIDEConfig, initialize_environment
 
 logger = logging.getLogger(__name__)
 
 
-def load_yaml_config(config_path: Path) -> Dict[str, Any]:
-    """Load configuration from YAML file.
+def create_model_config(tide_config: TIDEConfig) -> TIDELiteConfig:
+    """Convert TIDEConfig to TIDELiteConfig for model initialization.
     
     Args:
-        config_path: Path to YAML configuration file.
+        tide_config: Unified TIDE configuration.
         
     Returns:
-        Dictionary of configuration parameters.
-        
-    Raises:
-        FileNotFoundError: If config file doesn't exist.
-        yaml.YAMLError: If YAML parsing fails.
+        Model-specific configuration.
     """
-    if not config_path.exists():
-        raise FileNotFoundError(f"Configuration file not found: {config_path}")
-    
-    with open(config_path, "r") as f:
-        config = yaml.safe_load(f)
-    
-    logger.info(f"Loaded configuration from {config_path}")
-    return config
+    return TIDELiteConfig(
+        encoder_name=tide_config.model_name,
+        hidden_dim=tide_config.hidden_dim,
+        time_encoding_dim=tide_config.time_dims,
+        mlp_hidden_dim=tide_config.time_mlp_hidden,
+        mlp_dropout=tide_config.mlp_dropout,
+        freeze_encoder=tide_config.freeze_encoder,
+        pooling_strategy=tide_config.pooling_strategy,
+        gate_activation=tide_config.gate_activation,
+    )
 
 
-def merge_configs(
-    base_config: Dict[str, Any],
-    overrides: Dict[str, Any],
-) -> Dict[str, Any]:
-    """Merge configuration dictionaries with overrides.
+def create_training_config(tide_config: TIDEConfig) -> TrainingConfig:
+    """Convert TIDEConfig to TrainingConfig for trainer.
     
     Args:
-        base_config: Base configuration dictionary.
-        overrides: Override values (from CLI args).
+        tide_config: Unified TIDE configuration.
         
     Returns:
-        Merged configuration dictionary.
+        Training-specific configuration.
     """
-    merged = base_config.copy()
-    
-    for key, value in overrides.items():
-        if value is not None:
-            merged[key] = value
-    
-    return merged
+    return TrainingConfig(
+        encoder_name=tide_config.model_name,
+        hidden_dim=tide_config.hidden_dim,
+        time_encoding_dim=tide_config.time_dims,
+        mlp_hidden_dim=tide_config.time_mlp_hidden,
+        mlp_dropout=tide_config.mlp_dropout,
+        freeze_encoder=tide_config.freeze_encoder,
+        pooling_strategy=tide_config.pooling_strategy,
+        gate_activation=tide_config.gate_activation,
+        batch_size=tide_config.batch_size,
+        eval_batch_size=tide_config.eval_batch_size,
+        max_seq_length=tide_config.max_seq_len,
+        num_workers=tide_config.num_workers,
+        num_epochs=tide_config.epochs,
+        learning_rate=tide_config.lr,
+        warmup_steps=tide_config.warmup_steps,
+        weight_decay=tide_config.weight_decay,
+        gradient_clip=tide_config.gradient_clip,
+        temporal_weight=tide_config.consistency_weight,
+        preservation_weight=tide_config.preservation_weight,
+        tau_seconds=tide_config.tau_seconds,
+        use_amp=tide_config.use_amp,
+        save_every_n_steps=tide_config.save_every,
+        eval_every_n_steps=tide_config.eval_every,
+        output_dir=tide_config.out_dir,
+        checkpoint_dir=tide_config.checkpoint_dir,
+        seed=tide_config.seed,
+        log_level=tide_config.log_level,
+        dry_run=tide_config.dry_run,
+        device=tide_config.device,
+        temporal_enabled=tide_config.temporal_enabled,
+    )
 
 
 def setup_argument_parser() -> argparse.ArgumentParser:
@@ -72,7 +88,7 @@ def setup_argument_parser() -> argparse.ArgumentParser:
         Configured ArgumentParser instance.
     """
     parser = argparse.ArgumentParser(
-        prog="tide-lite-train",
+        prog="tide-train",
         description="Train TIDE-Lite temporal embedding models",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -82,105 +98,26 @@ def setup_argument_parser() -> argparse.ArgumentParser:
         "--config",
         type=Path,
         default=Path("configs/defaults.yaml"),
-        help="Path to YAML configuration file",
-    )
-    
-    # Output paths
-    parser.add_argument(
-        "--output-dir",
-        type=str,
-        default=None,
-        help="Output directory for results",
-    )
-    
-    # Model configuration
-    parser.add_argument(
-        "--encoder-name",
-        type=str,
-        default=None,
-        help="HuggingFace encoder model name",
+        help="Path to YAML configuration file (default: configs/defaults.yaml)",
     )
     
     parser.add_argument(
-        "--mlp-hidden-dim",
-        type=int,
-        default=None,
-        help="Hidden dimension of temporal MLP",
-    )
-    
-    # Training configuration
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=None,
-        help="Training batch size",
-    )
-    
-    parser.add_argument(
-        "--num-epochs",
-        type=int,
-        default=None,
-        help="Number of training epochs",
-    )
-    
-    parser.add_argument(
-        "--learning-rate",
-        type=float,
-        default=None,
-        help="Peak learning rate",
-    )
-    
-    parser.add_argument(
-        "--temporal-weight",
-        type=float,
-        default=None,
-        help="Weight for temporal consistency loss",
-    )
-    
-    parser.add_argument(
-        "--use-amp",
+        "--colab",
         action="store_true",
-        help="Enable automatic mixed precision",
+        help="Use Colab configuration overrides",
     )
     
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Perform dry run without actual training",
-    )
+    # Common overrides
+    parser.add_argument("--model-name", type=str, help="Override model name")
+    parser.add_argument("--batch-size", type=int, help="Override batch size")
+    parser.add_argument("--epochs", type=int, help="Override number of epochs")
+    parser.add_argument("--lr", type=float, help="Override learning rate")
+    parser.add_argument("--out-dir", type=str, help="Override output directory")
+    parser.add_argument("--device", type=str, choices=["cpu", "cuda"], help="Override device")
+    parser.add_argument("--dry-run", action="store_true", help="Perform dry run without training")
+    parser.add_argument("--seed", type=int, help="Override random seed")
     
     return parser
-
-
-def split_configs(config_dict: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
-    """Split configuration into model and training configs.
-    
-    Args:
-        config_dict: Combined configuration dictionary.
-        
-    Returns:
-        Tuple of (model_config_dict, training_config_dict).
-    """
-    # Model config fields
-    model_fields = {
-        "encoder_name", "hidden_dim", "time_encoding_dim", 
-        "mlp_hidden_dim", "mlp_dropout", "gate_activation",
-        "freeze_encoder", "pooling_strategy"
-    }
-    
-    # Training config fields
-    training_fields = {
-        "batch_size", "eval_batch_size", "max_seq_length", "num_workers",
-        "num_epochs", "learning_rate", "warmup_steps", "weight_decay", 
-        "gradient_clip", "temporal_weight", "preservation_weight", 
-        "tau_seconds", "use_amp", "save_every_n_steps", "eval_every_n_steps",
-        "output_dir", "checkpoint_dir", "seed", "log_level", "dry_run"
-    }
-    
-    model_config = {k: v for k, v in config_dict.items() if k in model_fields}
-    training_config = {k: v for k, v in config_dict.items() if k in training_fields}
-    
-    return model_config, training_config
 
 
 def main() -> int:
@@ -189,97 +126,100 @@ def main() -> int:
     Returns:
         Exit code (0 for success, non-zero for errors).
     """
-    # Parse arguments
     parser = setup_argument_parser()
     args = parser.parse_args()
     
     try:
-        # Load base config from file if exists
-        base_config = {}
-        if args.config.exists():
-            base_config = load_yaml_config(args.config)
+        # Prepare CLI overrides
+        cli_overrides: Dict[str, Any] = {}
+        
+        # Map CLI arguments to config keys
+        if args.model_name is not None:
+            cli_overrides["model_name"] = args.model_name
+        if args.batch_size is not None:
+            cli_overrides["batch_size"] = args.batch_size
+        if args.epochs is not None:
+            cli_overrides["epochs"] = args.epochs
+        if args.lr is not None:
+            cli_overrides["lr"] = args.lr
+        if args.out_dir is not None:
+            cli_overrides["out_dir"] = args.out_dir
+        if args.device is not None:
+            cli_overrides["device"] = args.device
+        if args.dry_run:
+            cli_overrides["dry_run"] = True
+        if args.seed is not None:
+            cli_overrides["seed"] = args.seed
+        
+        # Load configuration with overrides
+        if args.colab:
+            # Load defaults first, then apply colab overrides
+            config = ConfigLoader.load_auto(
+                default_config=str(args.config),
+                colab_override=True
+            )
+            # Apply CLI overrides on top
+            if cli_overrides:
+                config_dict = ConfigLoader.merge_configs(config.to_dict(), cli_overrides)
+                config = TIDEConfig.from_dict(config_dict)
         else:
-            print(f"Warning: Config file {args.config} not found, using defaults")
+            config = ConfigLoader.load(
+                config_path=args.config,
+                cli_args=cli_overrides
+            )
         
-        # Convert args to config dict (only non-None values)
-        cli_overrides = {}
-        for key in ["output_dir", "encoder_name", "mlp_hidden_dim", "batch_size", 
-                    "num_epochs", "learning_rate", "temporal_weight", "dry_run"]:
-            value = getattr(args, key.replace("-", "_"), None)
-            if value is not None:
-                cli_overrides[key.replace("-", "_")] = value
+        # Initialize environment (logging, seeds, etc.)
+        initialize_environment(config)
         
-        if args.use_amp:
-            cli_overrides["use_amp"] = True
+        # Dry run information
+        if config.dry_run:
+            logger.info("=" * 60)
+            logger.info("DRY RUN MODE - No training will be performed")
+            logger.info("=" * 60)
         
-        # Merge configurations
-        final_config = merge_configs(base_config, cli_overrides)
-        
-        # Generate output directory if not specified
-        if "output_dir" not in final_config:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            final_config["output_dir"] = f"results/run_{timestamp}"
-        
-        # Split into model and training configs
-        model_config_dict, training_config_dict = split_configs(final_config)
-        
-        # Create config objects with defaults
-        model_config = TIDELiteConfig(**model_config_dict)
-        training_config = TrainingConfig(**training_config_dict)
-        
-        # Print training plan
-        print("\n" + "=" * 60)
-        print("TIDE-LITE TRAINING PLAN")
-        print("=" * 60)
-        print(f"\n📊 Model: {model_config.encoder_name}")
-        print(f"   Extra params: ~{model_config.mlp_hidden_dim * 600} (estimated)")
-        print(f"\n🔄 Training: {training_config.num_epochs} epochs")
-        print(f"   Batch size: {training_config.batch_size}")
-        print(f"   Learning rate: {training_config.learning_rate}")
-        print(f"\n💾 Output: {training_config.output_dir}")
-        
-        if training_config.dry_run:
-            print("\n⚠️  DRY RUN MODE - No actual training will occur")
-        
-        print("\n" + "=" * 60 + "\n")
+        # Create model configuration
+        model_config = create_model_config(config)
         
         # Initialize model
-        print("Initializing TIDE-Lite model...")
+        logger.info("Initializing TIDE-Lite model...")
         model = TIDELite(model_config)
         
-        # Print parameter summary
+        # Log parameter summary
         param_summary = model.get_parameter_summary()
-        print(f"  • Total parameters: {param_summary['total_params']:,}")
-        print(f"  • Trainable parameters: {param_summary['trainable_params']:,}")
-        print(f"  • Extra TIDE parameters: {param_summary['extra_params']:,}")
+        logger.info(f"Total parameters: {param_summary['total_params']:,}")
+        logger.info(f"Trainable parameters: {param_summary['trainable_params']:,}")
+        logger.info(f"Extra TIDE parameters: {param_summary['extra_params']:,}")
+        
+        # Create training configuration
+        training_config = create_training_config(config)
         
         # Initialize trainer
-        print("\nInitializing trainer...")
+        logger.info("Initializing trainer...")
         trainer = TIDETrainer(model, training_config)
         
         # Run training or dry run
-        if training_config.dry_run:
-            print("\nExecuting dry run...")
+        if config.dry_run:
+            logger.info("Executing dry run...")
             summary = trainer.dry_run_summary()
-            print("\nDry run complete. Check output directory for summary.")
+            logger.info("Dry run complete. Check output directory for summary.")
         else:
-            print("\nStarting training...")
-            print("Press Ctrl+C to interrupt\n")
+            logger.info("Starting training...")
+            logger.info("Press Ctrl+C to interrupt")
             metrics = trainer.train()
-            print("\n✅ Training complete!")
-            print(f"Final validation Spearman: {metrics['final_val_spearman']:.4f}")
-            print(f"Results saved to: {training_config.output_dir}")
+            logger.info("Training complete!")
+            logger.info(f"Final validation Spearman: {metrics['final_val_spearman']:.4f}")
+            logger.info(f"Results saved to: {config.out_dir}")
         
         return 0
         
     except FileNotFoundError as e:
-        print(f"Error: {e}", file=sys.stderr)
+        logger.error(f"Error: {e}")
         return 1
     except KeyboardInterrupt:
-        print("\n\nTraining interrupted by user", file=sys.stderr)
+        logger.info("Training interrupted by user")
         return 130
     except Exception as e:
-        print(f"Unexpected error: {e}", file=sys.stderr)
+        logger.error(f"Unexpected error: {e}")
         import traceback
         traceback.print_exc()
         return 1

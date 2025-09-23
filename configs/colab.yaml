@@ -1,48 +1,33 @@
-# Google Colab optimized configuration
-# Use this for training on Colab with GPU
+# TIDE-Lite Google Colab Configuration
+# Minimal overrides for Colab environment - inherits all defaults
 
-# Model configuration
-encoder_name: "sentence-transformers/all-MiniLM-L6-v2"
-hidden_dim: 384
-time_encoding_dim: 64   # Increased for better temporal resolution
-mlp_hidden_dim: 256     # Larger capacity model
-mlp_dropout: 0.15
-freeze_encoder: true
-pooling_strategy: "mean"
-gate_activation: "sigmoid"
-
-# Data configuration - optimized for GPU
-batch_size: 256
-eval_batch_size: 512
-max_seq_length: 128
-num_workers: 2
-
-# Training configuration
-num_epochs: 20
-learning_rate: 2.0e-5
-warmup_steps: 500
-weight_decay: 0.01
-gradient_clip: 1.0
-
-# Loss weights
-temporal_weight: 0.15
-preservation_weight: 0.03
-tau_seconds: 86400.0
-
-# GPU settings
-use_amp: true
+# Use GPU in Colab
 device: "cuda"
 
-# Checkpointing
-save_every_n_steps: 200
-eval_every_n_steps: 100
+# Colab-specific output directory
+out_dir: "/content/drive/MyDrive/tide_results"
 
-# Output
-output_dir: "results/colab"
-checkpoint_dir: "results/colab/checkpoints"
+# Larger batch sizes for GPU
+batch_size: 128
+eval_batch_size: 256
 
-# Misc
-seed: 42
-log_level: "INFO"
-dry_run: false
-temporal_enabled: true
+# Colab has good CPU count
+num_workers: 4
+
+# More frequent evaluation in Colab for monitoring
+eval_every: 50
+
+# Cache in Colab's persistent storage if mounted
+cache_dir: "/content/drive/MyDrive/tide_cache"
+
+# TimeQA data in Drive if available
+timeqa_data_dir: "/content/drive/MyDrive/datasets/timeqa"
+
+# TempLAMA path for Colab
+templama_path: "/content/drive/MyDrive/datasets/templama"
+
+# Use mixed precision (Colab GPUs support it)
+use_amp: true
+
+# Higher logging for debugging in notebooks
+log_level: "DEBUG"
