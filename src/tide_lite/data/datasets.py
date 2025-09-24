@@ -275,43 +275,24 @@ def load_timeqa(cfg: Dict) -> Dataset:
             logger.info(f"Loaded {len(dataset)} TempLAMA examples")
             return dataset
     
-    # If neither dataset is available, provide instructions
-    logger.warning("=" * 60)
-    logger.warning("Neither TimeQA nor TempLAMA datasets found!")
-    logger.warning("")
-    logger.warning("To use TimeQA:")
-    logger.warning("1. Download TimeQA dataset from [official source]")
-    logger.warning(f"2. Extract to: {timeqa_dir}")
-    logger.warning("3. Ensure train.json exists in that directory")
-    logger.warning("")
-    logger.warning("To use TempLAMA (simpler alternative):")
-    logger.warning("1. Download TempLAMA from:")
-    logger.warning("   https://github.com/google-research/language/tree/master/language/templama")
-    logger.warning(f"2. Place data files in: {templama_dir}")
-    logger.warning("=" * 60)
+    # If neither dataset is available, raise an error with clear instructions
+    error_msg = "\n" + "=" * 60 + "\n"
+    error_msg += "Neither TimeQA nor TempLAMA datasets found!\n\n"
+    error_msg += "To use TimeQA:\n"
+    error_msg += "1. Download TimeQA dataset from official source\n"
+    error_msg += f"2. Extract to: {timeqa_dir}\n"
+    error_msg += "3. Ensure train.json exists in that directory\n"
+    error_msg += f"4. Set timeqa_data_dir in configs/defaults.yaml\n\n"
+    error_msg += "To use TempLAMA (simpler alternative):\n"
+    error_msg += "1. Download TempLAMA from:\n"
+    error_msg += "   https://github.com/google-research/language/tree/master/language/templama\n"
+    error_msg += f"2. Place data files in: {templama_dir}\n"
+    error_msg += f"3. Set templama_path in configs/defaults.yaml\n\n"
+    error_msg += "To skip temporal evaluation:\n"
+    error_msg += "  Use --skip-temporal flag when running evaluation\n"
+    error_msg += "=" * 60
     
-    # Create minimal dummy dataset for pipeline testing
-    logger.warning("Creating minimal dummy dataset for testing only!")
-    
-    dummy_examples = [
-        {
-            "question": "When did the Berlin Wall fall?",
-            "context": "The Berlin Wall was a barrier that divided Berlin from 1961 to 1989.",
-            "answer": "1989",
-            "timestamp": 594691200.0,  # 1989 timestamp
-        },
-        {
-            "question": "Who was the president during the moon landing?",
-            "context": "Apollo 11 landed on the moon in July 1969 during Nixon's presidency.",
-            "answer": "Nixon",
-            "timestamp": -14182800.0,  # 1969 timestamp
-        },
-    ]
-    
-    dataset = Dataset.from_pandas(pd.DataFrame(dummy_examples))
-    logger.warning(f"Created {len(dataset)} dummy temporal examples")
-    
-    return dataset
+    raise FileNotFoundError(error_msg)
 
 
 def verify_dataset_integrity(dataset) -> bool:
