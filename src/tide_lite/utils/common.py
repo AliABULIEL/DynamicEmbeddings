@@ -40,7 +40,7 @@ def mean_pool(
         
     Note:
         Performs mean pooling over valid tokens (non-masked positions),
-        handling padding tokens correctly.
+        handling padding tokens correctly. Returns zeros for all-zero masks.
     """
     # Expand mask to match hidden state dimensions
     mask_expanded = attention_mask.unsqueeze(-1).expand(last_hidden_state.size()).float()
@@ -49,7 +49,12 @@ def mean_pool(
     sum_embeddings = (last_hidden_state * mask_expanded).sum(dim=1)
     
     # Count valid tokens per sample
-    sum_mask = mask_expanded.sum(dim=1).clamp(min=1e-9)
+    sum_mask = mask_expanded.sum(dim=1)
+    
+    # Handle all-zero masks explicitly
+    # Clamp to small epsilon to avoid division by zero
+    # This returns zeros for sequences with no valid tokens
+    sum_mask = sum_mask.clamp(min=1e-9)
     
     # Compute mean
     return sum_embeddings / sum_mask
