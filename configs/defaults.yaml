@@ -183,4 +183,11 @@ quora_config: null
 
 # Temporal dataset selection: "timeqa" or "templama"
 temporal_dataset: "templama"  # TempLAMA as default (easier to download)
+
+# Path to TempLAMA dataset files
+# Download from: https://github.com/google-research/language/tree/master/language/templama
 templama_path: "./data/templama"
+
+# Skip temporal evaluation if datasets not available
+# Can be overridden with --skip-temporal CLI flag
+skip_temporal: false

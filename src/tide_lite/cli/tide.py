@@ -268,19 +268,22 @@ def cmd_bench_all(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> i
         "Benchmark on Quora retrieval"
     )
     
-    # Temporal evaluation
-    cmd_temporal = ["python", "-m", "tide_lite.cli.eval_temporal"]
-    cmd_temporal.extend(["--model", str(args.model)])
-    cmd_temporal.extend(["--type", model_type])
-    cmd_temporal.extend(["--output-dir", str(output_dir)])
-    if not orchestrator.dry_run:
-        cmd_temporal.append("--run")
-    
-    orchestrator.add_command(
-        "bench-temporal",
-        cmd_temporal,
-        "Benchmark on temporal understanding"
-    )
+    # Temporal evaluation (if not skipped)
+    if not args.skip_temporal:
+        cmd_temporal = ["python", "-m", "tide_lite.cli.eval_temporal"]
+        cmd_temporal.extend(["--model", str(args.model)])
+        cmd_temporal.extend(["--type", model_type])
+        cmd_temporal.extend(["--output-dir", str(output_dir)])
+        if not orchestrator.dry_run:
+            cmd_temporal.append("--run")
+        
+        orchestrator.add_command(
+            "bench-temporal",
+            cmd_temporal,
+            "Benchmark on temporal understanding"
+        )
+    else:
+        print("⚠️ Skipping temporal evaluation (--skip-temporal flag set)")
     
     return orchestrator.execute_plan()
 
@@ -466,6 +469,11 @@ def setup_parser() -> argparse.ArgumentParser:
     bench_parser.add_argument("--model", required=True, help="Model path or ID")
     bench_parser.add_argument("--type", choices=["tide_lite", "baseline"], help="Model type")
     bench_parser.add_argument("--output-dir", type=Path, help="Output directory")
+    bench_parser.add_argument(
+        "--skip-temporal",
+        action="store_true",
+        help="Skip temporal evaluation if datasets are not available"
+    )
     
     # Ablation subcommand
     ablation_parser = subparsers.add_parser("ablation", help="Run ablation study")
