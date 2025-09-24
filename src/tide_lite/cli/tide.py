@@ -20,14 +20,13 @@ logger = logging.getLogger(__name__)
 class TIDEOrchestrator:
     """Orchestrates TIDE-Lite pipeline operations."""
     
-    def __init__(self, dry_run: bool = True, run: bool = False) -> None:
+    def __init__(self, execute: bool = True) -> None:
         """Initialize orchestrator.
         
         Args:
-            dry_run: If True, only print commands without executing.
-            run: If True, actually execute commands (overrides dry_run).
+            execute: If True, execute commands. If False, only show plan.
         """
-        self.dry_run = not run if run else dry_run
+        self.execute = execute
         self.commands_to_run: List[Dict[str, Any]] = []
     
     def add_command(
@@ -74,10 +73,10 @@ class TIDEOrchestrator:
             if command['output_path']:
                 print(f"    📄 Output: {command['output_path']}")
         
-        if self.dry_run:
+        if not self.execute:
             print("\n" + "=" * 70)
-            print("🔍 DRY RUN MODE - Commands above would be executed in sequence")
-            print("💡 Use --run to actually execute these commands")
+            print("🔍 PLAN MODE - Commands above would be executed in sequence")
+            print("💡 Use without --plan flag to actually execute these commands")
             print("=" * 70)
             return 0
         
@@ -127,7 +126,7 @@ def cmd_train(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> int:
     if args.consistency_weight:
         cmd.extend(["--consistency-weight", str(args.consistency_weight)])
     
-    if not orchestrator.dry_run:
+    if orchestrator.execute:
         cmd.append("--run")
     
     output_dir = args.output_dir or Path("results") / f"run-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
@@ -155,7 +154,7 @@ def cmd_eval_stsb(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> i
     if args.split:
         cmd.extend(["--split", args.split])
     
-    if not orchestrator.dry_run:
+    if orchestrator.execute:
         cmd.append("--run")
     
     model_name = Path(str(args.model)).stem if "/" in str(args.model) else str(args.model)
@@ -188,7 +187,7 @@ def cmd_eval_quora(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> 
     if args.max_queries:
         cmd.extend(["--max-queries", str(args.max_queries)])
     
-    if not orchestrator.dry_run:
+    if orchestrator.execute:
         cmd.append("--run")
     
     model_name = Path(str(args.model)).stem if "/" in str(args.model) else str(args.model)
@@ -217,7 +216,7 @@ def cmd_eval_temporal(args: argparse.Namespace, orchestrator: TIDEOrchestrator) 
     if args.time_window_days:
         cmd.extend(["--time-window-days", str(args.time_window_days)])
     
-    if not orchestrator.dry_run:
+    if orchestrator.execute:
         cmd.append("--run")
     
     model_name = Path(str(args.model)).stem if "/" in str(args.model) else str(args.model)
@@ -243,7 +242,7 @@ def cmd_bench_all(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> i
     cmd_stsb.extend(["--model", str(args.model)])
     cmd_stsb.extend(["--type", model_type])
     cmd_stsb.extend(["--output-dir", str(output_dir)])
-    if not orchestrator.dry_run:
+    if orchestrator.execute:
         cmd_stsb.append("--run")
     
     orchestrator.add_command(
@@ -259,7 +258,7 @@ def cmd_bench_all(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> i
     cmd_quora.extend(["--output-dir", str(output_dir)])
     cmd_quora.extend(["--max-corpus", "10000"])
     cmd_quora.extend(["--max-queries", "1000"])
-    if not orchestrator.dry_run:
+    if orchestrator.execute:
         cmd_quora.append("--run")
     
     orchestrator.add_command(
@@ -274,7 +273,7 @@ def cmd_bench_all(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> i
         cmd_temporal.extend(["--model", str(args.model)])
         cmd_temporal.extend(["--type", model_type])
         cmd_temporal.extend(["--output-dir", str(output_dir)])
-        if not orchestrator.dry_run:
+        if orchestrator.execute:
             cmd_temporal.append("--run")
         
         orchestrator.add_command(
@@ -318,7 +317,7 @@ def cmd_ablation(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> in
             "--time-encoding", encoding,
             "--num-epochs", "1",  # Quick ablation
         ]
-        if not orchestrator.dry_run:
+        if orchestrator.execute:
             cmd_train.append("--run")
         
         orchestrator.add_command(
@@ -334,7 +333,7 @@ def cmd_ablation(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> in
             "--output-dir", str(output_dir),
             "--split", "validation",
         ]
-        if not orchestrator.dry_run:
+        if orchestrator.execute:
             cmd_eval.append("--run")
         
         orchestrator.add_command(
@@ -349,7 +348,7 @@ def cmd_ablation(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> in
         "--results-dir", str(output_base),
         "--output", str(output_base / "ablation_summary.json"),
     ]
-    if not orchestrator.dry_run:
+    if orchestrator.execute:
         cmd_summary.append("--run")
     
     orchestrator.add_command(
@@ -370,7 +369,7 @@ def cmd_aggregate(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> i
     if args.output:
         cmd.extend(["--output", str(args.output)])
     
-    if not orchestrator.dry_run:
+    if orchestrator.execute:
         cmd.append("--run")
     
     orchestrator.add_command(
@@ -392,7 +391,7 @@ def cmd_report(args: argparse.Namespace, orchestrator: TIDEOrchestrator) -> int:
     if args.output_dir:
         cmd.extend(["--output-dir", str(args.output_dir)])
     
-    if not orchestrator.dry_run:
+    if orchestrator.execute:
         cmd.append("--run")
     
     output_dir = args.output_dir or Path("reports")
@@ -417,16 +416,9 @@ def setup_parser() -> argparse.ArgumentParser:
     
     # Global arguments
     parser.add_argument(
-        "--dry-run",
+        "--plan",
         action="store_true",
-        default=True,
-        help="Print command plan without executing (default)",
-    )
-    
-    parser.add_argument(
-        "--run",
-        action="store_true",
-        help="Actually execute commands",
+        help="Show execution plan only without running commands",
     )
     
     # Subcommands
@@ -525,8 +517,8 @@ def main() -> int:
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
     
-    # Create orchestrator (dry-run by default unless --run is specified)
-    orchestrator = TIDEOrchestrator(dry_run=not args.run, run=args.run)
+    # Create orchestrator (executes by default unless --plan is specified)
+    orchestrator = TIDEOrchestrator(execute=not args.plan)
     
     # Dispatch to appropriate handler
     handlers = {
