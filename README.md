@@ -1,4 +1,84 @@
-# TIDE-Lite: Temporally-Indexed Dynamic Embeddings (Lightweight)
+
+
+## 🔬 Reproduce Results
+
+### Quick Reproduction (Dry-Run)
+
+All commands default to dry-run mode to show you the execution plan:
+
+```bash
+# 1. Check setup
+python -m tide_lite.cli.tide --help
+
+# 2. Train TIDE-Lite (shows plan)
+python -m tide_lite.cli.tide train --output-dir results/reproduce
+
+# 3. Benchmark all models (shows plan)
+python -m tide_lite.cli.tide bench-all --model minilm --type baseline
+python -m tide_lite.cli.tide bench-all --model e5-base --type baseline
+python -m tide_lite.cli.tide bench-all --model bge-base --type baseline
+python -m tide_lite.cli.tide bench-all --model results/reproduce/checkpoints/best_model.pt
+
+# 4. Run ablation study (shows plan)
+python -m tide_lite.cli.tide ablation \
+    --time-mlp-hidden 64,128,256 \
+    --consistency-weight 0.05,0.1,0.2
+
+# 5. Generate report (shows plan)
+python -m tide_lite.cli.tide aggregate --results-dir results/
+python -m tide_lite.cli.tide report --input results/summary.json
+```
+
+### Full Reproduction (Execute)
+
+Add `--run` flag to actually execute:
+
+```bash
+# Train TIDE-Lite on STS-B
+python -m tide_lite.cli.tide train \
+    --output-dir results/reproduce \
+    --num-epochs 3 \
+    --run
+
+# Evaluate all baselines
+for model in minilm e5-base bge-base; do
+    python -m tide_lite.cli.tide bench-all \
+        --model $model \
+        --type baseline \
+        --output-dir results/baselines \
+        --run
+done
+
+# Evaluate trained TIDE-Lite
+python -m tide_lite.cli.tide bench-all \
+    --model results/reproduce/checkpoints/best_model.pt \
+    --output-dir results/tide \
+    --run
+
+# Generate final report
+python -m tide_lite.cli.tide aggregate --results-dir results/ --run
+python -m tide_lite.cli.tide report --input results/summary.json --run
+```
+
+### Using Makefile
+
+```bash
+# Show all available commands
+make help
+
+# Run tests and checks
+make check
+
+# Dry-run demos
+make demo-cpu      # Quick CPU test
+make demo-full     # Full pipeline
+
+# Execute training
+make train-run
+
+# Benchmark baselines
+make bench-baseline
+```# TIDE-Lite: Temporally-Indexed Dynamic Embeddings (Lightweight)
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
