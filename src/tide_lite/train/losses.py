@@ -72,21 +72,40 @@ def temporal_consistency_loss(
         # Need at least 2 samples for pairwise comparison
         return torch.tensor(0.0, device=embeddings.device)
     
+    # Strict timestamp validation
+    if not isinstance(timestamps, torch.Tensor):
+        raise ValueError(f"timestamps must be a torch.Tensor, got {type(timestamps)}")
+    
+    if timestamps.dtype not in [torch.float32, torch.float64]:
+        raise ValueError(f"timestamps must be float tensor, got {timestamps.dtype}")
+    
+    if timestamps.device != embeddings.device:
+        raise ValueError(
+            f"timestamps and embeddings must be on same device. "
+            f"Got timestamps on {timestamps.device}, embeddings on {embeddings.device}"
+        )
+    
+    # Ensure timestamps are 1D
+    if timestamps.dim() == 2 and timestamps.shape[1] == 1:
+        timestamps = timestamps.squeeze(1)
+    elif timestamps.dim() != 1:
+        raise ValueError(
+            f"timestamps must be 1D tensor of shape [batch_size]. "
+            f"Got shape {timestamps.shape} with batch_size={batch_size}"
+        )
+    
+    if timestamps.shape[0] != batch_size:
+        raise ValueError(
+            f"timestamps batch size ({timestamps.shape[0]}) must match "
+            f"embeddings batch size ({batch_size})"
+        )
+    
     # Normalize embeddings for cosine similarity
     embeddings_norm = F.normalize(embeddings, p=2, dim=1)
     
     # Compute pairwise cosine similarities
     # Shape: [batch_size, batch_size]
     similarity_matrix = torch.matmul(embeddings_norm, embeddings_norm.t())
-    
-    # Ensure timestamps are 1D and handle potential shape issues
-    if timestamps.dim() > 1:
-        timestamps = timestamps.squeeze()
-    
-    # Add dimension check
-    if timestamps.dim() != 1 or timestamps.shape[0] != batch_size:
-        logger.warning(f"Unexpected timestamp shape: {timestamps.shape}, expected ({batch_size},)")
-        timestamps = timestamps.view(batch_size)
     
     # Compute pairwise time differences with safe broadcasting
     # Shape: [batch_size, 1] - [1, batch_size] = [batch_size, batch_size]
