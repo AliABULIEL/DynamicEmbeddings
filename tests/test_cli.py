@@ -1,299 +1,167 @@
-"""Unit tests for CLI argument parsers."""
-
-import argparse
-import sys
-import tempfile
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+"""Test CLI argument parsing and config validation."""
 
 import pytest
-import yaml
-
-from src.tide_lite.cli.train_cli import (
-    create_train_parser,
-    load_yaml_config,
-    merge_configs,
-    parse_train_args,
-)
-from src.tide_lite.cli.eval_stsb_cli import create_eval_stsb_parser
-from src.tide_lite.cli.eval_quora_cli import create_eval_quora_parser
-from src.tide_lite.cli.eval_temporal_cli import create_eval_temporal_parser
-from src.tide_lite.cli.aggregate_cli import create_aggregate_parser
-from src.tide_lite.cli.plots_cli import create_plots_parser
-from src.tide_lite.cli.report_cli import create_report_parser
+from pathlib import Path
+from tide_lite.utils.config import TIDEConfig, load_config
 
 
-class TestTrainCLI:
-    """Test training CLI parser."""
+class TestConfig:
+    """Test configuration loading and validation."""
     
-    def test_create_train_parser(self):
-        """Test train parser creation."""
-        parser = create_train_parser()
+    def test_default_config(self):
+        """Test default configuration values."""
+        config = TIDEConfig()
         
-        # Check that essential arguments exist
-        args = parser.parse_args([
-            "--data-dir", "/tmp/data",
-            "--output-dir", "/tmp/output"
-        ])
-        
-        assert args.data_dir == "/tmp/data"
-        assert args.output_dir == "/tmp/output"
+        assert config.model_name == "sentence-transformers/all-MiniLM-L6-v2"
+        assert config.hidden_dim == 384
+        assert config.time_dims == 32
+        assert config.max_seq_len == 128
+        assert config.batch_size == 32
+        assert config.freeze_encoder == True
     
-    def test_train_parser_with_config(self):
-        """Test train parser with config file."""
-        parser = create_train_parser()
+    def test_config_override(self):
+        """Test configuration override."""
+        config = TIDEConfig(
+            batch_size=64,
+            learning_rate=1e-3,
+            num_epochs=10,
+        )
         
-        with tempfile.NamedTemporaryFile(suffix=".yaml", mode='w', delete=False) as f:
-            yaml.dump({"batch_size": 64, "lr": 0.001}, f)
-            config_path = f.name
-        
-        try:
-            args = parser.parse_args([
-                "--config", config_path,
-                "--data-dir", "/tmp/data",
-                "--output-dir", "/tmp/output"
-            ])
-            assert args.config == config_path
-        finally:
-            Path(config_path).unlink()
+        assert config.batch_size == 64
+        assert config.learning_rate == 1e-3
+        assert config.num_epochs == 10
     
-    def test_train_parser_overrides(self):
-        """Test CLI argument overrides."""
-        parser = create_train_parser()
+    def test_config_validation(self):
+        """Test configuration validation."""
+        # These should work
+        config = TIDEConfig(
+            mlp_dropout=0.5,
+            consistency_weight=0.2,
+        )
+        assert config.mlp_dropout == 0.5
+        assert config.consistency_weight == 0.2
         
-        args = parser.parse_args([
-            "--data-dir", "/tmp/data",
-            "--output-dir", "/tmp/output",
-            "--batch-size", "32",
-            "--lr", "0.0001",
-            "--epochs", "10",
-            "--encoder-name", "bert-base-uncased"
-        ])
+        # Test pooling strategy validation
+        config = TIDEConfig(pooling_strategy="mean")
+        assert config.pooling_strategy == "mean"
         
-        assert args.batch_size == 32
-        assert args.lr == 0.0001
-        assert args.epochs == 10
-        assert args.encoder_name == "bert-base-uncased"
-    
-    def test_train_parser_boolean_flags(self):
-        """Test boolean flags in train parser."""
-        parser = create_train_parser()
-        
-        # Test with flags
-        args = parser.parse_args([
-            "--data-dir", "/tmp/data",
-            "--output-dir", "/tmp/output",
-            "--freeze-encoder",
-            "--use-wandb"
-        ])
-        assert args.freeze_encoder is True
-        assert args.use_wandb is True
-        
-        # Test without flags (defaults)
-        args = parser.parse_args([
-            "--data-dir", "/tmp/data",
-            "--output-dir", "/tmp/output"
-        ])
-        # Check defaults if any
+        config = TIDEConfig(pooling_strategy="cls")
+        assert config.pooling_strategy == "cls"
 
 
-class TestEvalCLIs:
-    """Test evaluation CLI parsers."""
+class TestCLIParsing:
+    """Test CLI argument parsing."""
     
-    def test_eval_stsb_parser(self):
-        """Test STS-B evaluation parser."""
-        parser = create_eval_stsb_parser()
+    def test_parse_train_args(self):
+        """Test training argument parsing."""
+        from tide_lite.cli.train import setup_argument_parser
         
+        parser = setup_argument_parser()
+        
+        # Test default dry-run
+        args = parser.parse_args([])
+        assert args.run == False  # Default is dry-run
+        
+        # Test with --run flag
+        args = parser.parse_args(["--run"])
+        assert args.run == True
+        
+        # Test config override
         args = parser.parse_args([
-            "--checkpoint", "/tmp/model.pt",
-            "--data-dir", "/tmp/data"
+            "--batch-size", "64",
+            "--learning-rate", "1e-3",
+            "--num-epochs", "5",
         ])
-        
-        assert args.checkpoint == "/tmp/model.pt"
-        assert args.data_dir == "/tmp/data"
-    
-    def test_eval_quora_parser(self):
-        """Test Quora evaluation parser."""
-        parser = create_eval_quora_parser()
-        
-        args = parser.parse_args([
-            "--checkpoint", "/tmp/model.pt",
-            "--data-dir", "/tmp/data",
-            "--batch-size", "64"
-        ])
-        
-        assert args.checkpoint == "/tmp/model.pt"
-        assert args.data_dir == "/tmp/data"
         assert args.batch_size == 64
+        assert args.learning_rate == 1e-3
+        assert args.num_epochs == 5
     
-    def test_eval_temporal_parser(self):
-        """Test temporal evaluation parser."""
-        parser = create_eval_temporal_parser()
+    def test_parse_eval_args(self):
+        """Test evaluation argument parsing."""
+        from tide_lite.cli.eval_stsb import setup_argument_parser
         
+        parser = setup_argument_parser()
+        
+        # Test required model argument
+        args = parser.parse_args(["--model", "test_model.pt"])
+        assert args.model == "test_model.pt"
+        assert args.run == False  # Default is dry-run
+        
+        # Test model type
         args = parser.parse_args([
-            "--checkpoint", "/tmp/model.pt",
-            "--data-dir", "/tmp/data",
-            "--temporal-split", "week"
+            "--model", "minilm",
+            "--type", "baseline",
         ])
-        
-        assert args.checkpoint == "/tmp/model.pt"
-        assert args.data_dir == "/tmp/data"
-        assert args.temporal_split == "week"
-
-
-class TestAggregateCLI:
-    """Test aggregation CLI parser."""
+        assert args.model == "minilm"
+        assert args.type == "baseline"
     
-    def test_aggregate_parser(self):
-        """Test aggregate parser."""
-        parser = create_aggregate_parser()
+    def test_orchestrator_subcommands(self):
+        """Test orchestrator subcommand parsing."""
+        from tide_lite.cli.tide import setup_parser
         
+        parser = setup_parser()
+        
+        # Test train subcommand
+        args = parser.parse_args(["train", "--output-dir", "results"])
+        assert args.command == "train"
+        assert args.output_dir == Path("results")
+        
+        # Test bench-all subcommand
+        args = parser.parse_args(["bench-all", "--model", "minilm", "--type", "baseline"])
+        assert args.command == "bench-all"
+        assert args.model == "minilm"
+        assert args.type == "baseline"
+        
+        # Test ablation subcommand
         args = parser.parse_args([
-            "--results-dir", "/tmp/results",
-            "--output", "/tmp/aggregated.json"
+            "ablation",
+            "--time-mlp-hidden", "64,128",
+            "--consistency-weight", "0.1,0.2",
         ])
-        
-        assert args.results_dir == "/tmp/results"
-        assert args.output == "/tmp/aggregated.json"
-    
-    def test_aggregate_parser_pattern(self):
-        """Test aggregate parser with pattern."""
-        parser = create_aggregate_parser()
-        
-        args = parser.parse_args([
-            "--results-dir", "/tmp/results",
-            "--pattern", "*.json",
-            "--output", "/tmp/aggregated.json"
-        ])
-        
-        assert args.pattern == "*.json"
+        assert args.command == "ablation"
+        assert args.time_mlp_hidden == "64,128"
+        assert args.consistency_weight == "0.1,0.2"
 
 
-class TestPlotsCLI:
-    """Test plots CLI parser."""
+class TestDatasetLoading:
+    """Test dataset head loading."""
     
-    def test_plots_parser(self):
-        """Test plots parser."""
-        parser = create_plots_parser()
+    def test_load_stsb_head(self):
+        """Test loading first few samples of STS-B."""
+        from tide_lite.data.datasets import load_stsb
         
-        args = parser.parse_args([
-            "--results", "/tmp/results.json",
-            "--output-dir", "/tmp/plots"
-        ])
+        cfg = {"max_samples": 10, "cache_dir": "./data", "seed": 42}
+        datasets = load_stsb(cfg)
         
-        assert args.results == "/tmp/results.json"
-        assert args.output_dir == "/tmp/plots"
+        # Should have train, validation, test splits
+        assert "train" in datasets
+        assert "validation" in datasets
+        assert "test" in datasets
+        
+        # Check we can access first sample
+        if len(datasets["train"]) > 0:
+            sample = datasets["train"][0]
+            assert "sentence1" in sample
+            assert "sentence2" in sample
+            assert "score" in sample
     
-    def test_plots_parser_types(self):
-        """Test plots parser with plot types."""
-        parser = create_plots_parser()
+    def test_load_quora_head(self):
+        """Test loading first few samples of Quora."""
+        from tide_lite.data.datasets import load_quora
         
-        args = parser.parse_args([
-            "--results", "/tmp/results.json",
-            "--output-dir", "/tmp/plots",
-            "--plot-types", "loss", "accuracy"
-        ])
+        cfg = {"max_samples": 10, "cache_dir": "./data", "seed": 42}
+        corpus, queries, qrels = load_quora(cfg)
         
-        assert "loss" in args.plot_types
-        assert "accuracy" in args.plot_types
-
-
-class TestReportCLI:
-    """Test report CLI parser."""
-    
-    def test_report_parser(self):
-        """Test report parser."""
-        parser = create_report_parser()
+        # Should return three components
+        assert corpus is not None
+        assert queries is not None
+        assert qrels is not None
         
-        args = parser.parse_args([
-            "--experiment-dir", "/tmp/experiment",
-            "--output", "/tmp/report.md"
-        ])
-        
-        assert args.experiment_dir == "/tmp/experiment"
-        assert args.output == "/tmp/report.md"
-    
-    def test_report_parser_format(self):
-        """Test report parser with format."""
-        parser = create_report_parser()
-        
-        args = parser.parse_args([
-            "--experiment-dir", "/tmp/experiment",
-            "--output", "/tmp/report.html",
-            "--format", "html"
-        ])
-        
-        assert args.format == "html"
-
-
-class TestConfigUtilities:
-    """Test configuration utilities."""
-    
-    def test_load_yaml_config(self):
-        """Test YAML config loading."""
-        with tempfile.NamedTemporaryFile(suffix=".yaml", mode='w', delete=False) as f:
-            config_data = {
-                "model": {
-                    "encoder_name": "bert-base",
-                    "hidden_dim": 768
-                },
-                "training": {
-                    "batch_size": 32,
-                    "lr": 0.001
-                }
-            }
-            yaml.dump(config_data, f)
-            config_path = Path(f.name)
-        
-        try:
-            loaded_config = load_yaml_config(config_path)
-            assert loaded_config == config_data
-        finally:
-            config_path.unlink()
-    
-    def test_load_yaml_config_not_found(self):
-        """Test error when config file not found."""
-        with pytest.raises(FileNotFoundError):
-            load_yaml_config(Path("/nonexistent/config.yaml"))
-    
-    def test_merge_configs(self):
-        """Test configuration merging."""
-        base_config = {
-            "model": {"hidden_dim": 384, "dropout": 0.1},
-            "training": {"batch_size": 32, "lr": 0.001}
-        }
-        
-        overrides = {
-            "model": {"hidden_dim": 768},  # Override
-            "training": {"epochs": 10}  # New key
-        }
-        
-        merged = merge_configs(base_config, overrides)
-        
-        assert merged["model"]["hidden_dim"] == 768  # Overridden
-        assert merged["model"]["dropout"] == 0.1  # Preserved
-        assert merged["training"]["batch_size"] == 32  # Preserved
-        assert merged["training"]["epochs"] == 10  # New
-    
-    def test_parse_train_args_integration(self):
-        """Test full argument parsing integration."""
-        with tempfile.NamedTemporaryFile(suffix=".yaml", mode='w', delete=False) as f:
-            yaml.dump({"batch_size": 64, "lr": 0.001}, f)
-            config_path = f.name
-        
-        try:
-            with patch('sys.argv', ['train.py', 
-                                   '--config', config_path,
-                                   '--data-dir', '/tmp/data',
-                                   '--output-dir', '/tmp/output',
-                                   '--batch-size', '128']):  # Override
-                args = parse_train_args()
-                
-                # Config value should be overridden by CLI
-                assert args.batch_size == 128
-                assert args.lr == 0.001  # From config
-        finally:
-            Path(config_path).unlink()
+        # Check structure if data available
+        if len(corpus) > 0:
+            doc = corpus[0]
+            assert "doc_id" in doc
+            assert "text" in doc
 
 
 if __name__ == "__main__":
