@@ -1,169 +1,209 @@
-# TIDE-Lite CLI Examples
+# TIDE-Lite Benchmarking Examples
 
-This document provides example commands for benchmarking and evaluation using the TIDE-Lite unified orchestrator CLI.
+This document provides example commands for benchmarking TIDE-Lite against baseline models using the unified orchestrator CLI.
 
-## Quick Reference
+## Prerequisites
 
-All commands default to **dry-run mode** (show plan only). Add `--run` flag to actually execute.
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Verify installation
+python -m tide_lite.cli.tide --help
+```
 
 ## Benchmarking Baselines
 
-### MiniLM Baseline
+All benchmark commands use identical configuration:
+- **Tokenizer**: Model-specific (auto-detected)
+- **Max sequence length**: 128 tokens
+- **FAISS index**: Flat (exact search)
+- **Batch size**: 128 for retrieval, 64 for STS-B
+
+### 1. Benchmark MiniLM (Baseline)
+
 ```bash
 # Dry-run (default) - shows execution plan
 python -m tide_lite.cli.tide bench-all --model minilm --type baseline
 
-# Actually execute with --run
+# Actually execute benchmarks
 python -m tide_lite.cli.tide bench-all --model minilm --type baseline --run
 
-# With custom output directory
-python -m tide_lite.cli.tide bench-all --model minilm --type baseline \
-    --output-dir results/baselines/minilm --run
+# Output files:
+# - results/metrics_stsb_minilm.json
+# - results/metrics_quora_minilm.json
+# - results/metrics_temporal_minilm.json
 ```
 
-### E5-Base Baseline
+### 2. Benchmark E5-Base (Baseline)
+
 ```bash
 # Dry-run (default) - shows execution plan
 python -m tide_lite.cli.tide bench-all --model e5-base --type baseline
 
-# Actually execute
+# Actually execute benchmarks
 python -m tide_lite.cli.tide bench-all --model e5-base --type baseline --run
 
-# With custom output directory
-python -m tide_lite.cli.tide bench-all --model e5-base --type baseline \
-    --output-dir results/baselines/e5-base --run
+# Output files:
+# - results/metrics_stsb_e5-base.json
+# - results/metrics_quora_e5-base.json
+# - results/metrics_temporal_e5-base.json
 ```
 
-### BGE-Base Baseline
+### 3. Benchmark BGE-Base (Baseline)
+
 ```bash
 # Dry-run (default) - shows execution plan
 python -m tide_lite.cli.tide bench-all --model bge-base --type baseline
 
-# Actually execute
+# Actually execute benchmarks
 python -m tide_lite.cli.tide bench-all --model bge-base --type baseline --run
 
-# With custom output directory
-python -m tide_lite.cli.tide bench-all --model bge-base --type baseline \
-    --output-dir results/baselines/bge-base --run
+# Output files:
+# - results/metrics_stsb_bge-base.json
+# - results/metrics_quora_bge-base.json
+# - results/metrics_temporal_bge-base.json
 ```
 
-## Benchmarking TIDE-Lite
+### 4. Benchmark TIDE-Lite (Trained Model)
 
-### Trained TIDE-Lite Checkpoint
 ```bash
-# Dry-run (default) - shows execution plan
-python -m tide_lite.cli.tide bench-all --model path/to/tide_checkpoint.pt
+# After training TIDE-Lite
+python -m tide_lite.cli.tide train --output-dir results/tide_run1 --run
 
-# Actually execute
-python -m tide_lite.cli.tide bench-all --model path/to/tide_checkpoint.pt --run
-
-# Example with specific checkpoint
+# Benchmark the trained model
 python -m tide_lite.cli.tide bench-all \
-    --model results/run-20240315-142530/checkpoints/best_model.pt \
-    --output-dir results/tide_lite_eval --run
-```
+    --model results/tide_run1/checkpoints/best_model.pt \
+    --type tide_lite
 
-## Complete Baseline Comparison
+# Actually execute benchmarks
+python -m tide_lite.cli.tide bench-all \
+    --model results/tide_run1/checkpoints/best_model.pt \
+    --type tide_lite \
+    --run
 
-```bash
-# Run all baselines in sequence (dry-run)
-python -m tide_lite.cli.tide bench-all --model minilm --type baseline
-python -m tide_lite.cli.tide bench-all --model e5-base --type baseline
-python -m tide_lite.cli.tide bench-all --model bge-base --type baseline
-
-# Run all baselines in sequence (actual execution)
-python -m tide_lite.cli.tide bench-all --model minilm --type baseline --run
-python -m tide_lite.cli.tide bench-all --model e5-base --type baseline --run
-python -m tide_lite.cli.tide bench-all --model bge-base --type baseline --run
-
-# Then aggregate results
-python -m tide_lite.cli.tide aggregate --results-dir results/ --run
-
-# Generate comparison report
-python -m tide_lite.cli.tide report --input results/summary.json --run
+# Output files:
+# - results/metrics_stsb_best_model.json
+# - results/metrics_quora_best_model.json
+# - results/metrics_temporal_best_model.json
 ```
 
 ## Individual Evaluations
 
-### STS-B Only
+You can also run individual evaluations:
+
 ```bash
-# Baseline
+# STS-B only
 python -m tide_lite.cli.tide eval-stsb --model minilm --type baseline --run
 
-# TIDE-Lite
-python -m tide_lite.cli.tide eval-stsb --model path/to/checkpoint.pt --run
+# Quora retrieval only
+python -m tide_lite.cli.tide eval-quora --model minilm --type baseline --run
+
+# Temporal understanding only
+python -m tide_lite.cli.tide eval-temporal --model minilm --type baseline --run
 ```
 
-### Quora Retrieval Only
+## Custom Configuration
+
+Override default parameters:
+
 ```bash
-# Baseline with specific FAISS config
-python -m tide_lite.cli.tide eval-quora --model minilm --type baseline \
-    --index-type Flat --max-corpus 10000 --max-queries 1000 --run
+# Use IVF index for faster retrieval (less accurate)
+python -m tide_lite.cli.tide eval-quora \
+    --model minilm \
+    --type baseline \
+    --index-type IVF \
+    --max-corpus 50000 \
+    --max-queries 5000 \
+    --run
 
-# TIDE-Lite
-python -m tide_lite.cli.tide eval-quora --model path/to/checkpoint.pt \
-    --index-type Flat --max-corpus 10000 --max-queries 1000 --run
+# Custom time window for temporal evaluation
+python -m tide_lite.cli.tide eval-temporal \
+    --model minilm \
+    --type baseline \
+    --time-window-days 7 \
+    --run
 ```
 
-### Temporal Evaluation Only
+## Aggregate Results
+
+After running benchmarks, aggregate all results:
+
 ```bash
-# Baseline
-python -m tide_lite.cli.tide eval-temporal --model minilm --type baseline \
-    --time-window-days 30 --run
+# Aggregate all metrics
+python -m tide_lite.cli.tide aggregate --results-dir results/ --run
 
-# TIDE-Lite
-python -m tide_lite.cli.tide eval-temporal --model path/to/checkpoint.pt \
-    --time-window-days 30 --run
+# Generate report with plots
+python -m tide_lite.cli.tide report --input results/summary.json --run
 ```
 
-## Consistent Parameters
+## Ablation Study
 
-All evaluations use consistent parameters across models:
-- **Max sequence length**: 128 tokens
-- **FAISS index type**: Flat (exact search)
-- **Corpus size**: 10,000 documents (Quora)
-- **Query size**: 1,000 queries (Quora)
-- **Time window**: 30 days (Temporal)
-- **Batch size**: 128 (evaluation)
+Run hyperparameter grid search:
 
-## Output Structure
+```bash
+# Dry-run to see all configurations
+python -m tide_lite.cli.tide ablation \
+    --time-mlp-hidden 64,128,256 \
+    --consistency-weight 0.05,0.1,0.2 \
+    --time-encoding sinusoidal,learnable
 
-Results are saved in JSON format:
+# Execute ablation study (warning: time-consuming)
+python -m tide_lite.cli.tide ablation \
+    --time-mlp-hidden 64,128,256 \
+    --consistency-weight 0.05,0.1,0.2 \
+    --time-encoding sinusoidal,learnable \
+    --run
 ```
-results/
-├── metrics_stsb_<model>.json
-├── metrics_quora_<model>.json
-├── metrics_temporal_<model>.json
-├── summary.json            # Aggregated results
-├── summary.csv             # CSV format
-└── report.md              # Generated report
-```
+
+## Expected Runtimes
+
+On a typical GPU (e.g., NVIDIA T4):
+- **Single baseline benchmark**: ~10-15 minutes
+- **Full bench-all (3 evaluations)**: ~30-45 minutes
+- **TIDE-Lite training**: ~1-2 hours (3 epochs)
+- **Ablation study (9 configs)**: ~4-6 hours
+
+On CPU:
+- Multiply all times by approximately 5-10x
+
+## Unified Configuration
+
+All evaluations use consistent parameters to ensure fair comparison:
+
+| Parameter | Value | Note |
+|-----------|-------|------|
+| Max sequence length | 128 | Same for all models |
+| Pooling strategy | mean | Average over tokens |
+| FAISS index | Flat | Exact search (default) |
+| Quora max corpus | 10000 | For efficiency |
+| Quora max queries | 1000 | For efficiency |
+| Temporal window | 30 days | Default time window |
+| STS-B split | test | Final evaluation |
+
+## Tips
+
+1. **Always dry-run first**: Check the execution plan before running
+2. **Use smaller datasets for testing**: Add `--max-corpus 1000 --max-queries 100`
+3. **Monitor GPU memory**: Reduce batch size if OOM occurs
+4. **Save intermediate results**: Results are saved after each evaluation
+5. **Resume from checkpoints**: Training can be resumed if interrupted
 
 ## Troubleshooting
 
-### Out of Memory
-Reduce batch size in evaluation:
+If you encounter issues:
+
 ```bash
-python -m tide_lite.cli.tide bench-all --model minilm --type baseline \
-    --batch-size 32 --run
+# Check available models
+python -c "from tide_lite.models.baselines import MODEL_MAP; print(MODEL_MAP)"
+
+# Verify FAISS installation
+python -c "import faiss; print('FAISS available')"
+
+# Test with minimal data
+python -m tide_lite.cli.tide eval-stsb \
+    --model minilm \
+    --type baseline \
+    --batch-size 8 \
+    --run
 ```
-
-### FAISS Not Installed
-Install FAISS for retrieval evaluation:
-```bash
-# CPU version
-pip install faiss-cpu
-
-# GPU version (if CUDA available)
-pip install faiss-gpu
-```
-
-### Missing Datasets
-Datasets are automatically downloaded on first use. Ensure internet connection and sufficient disk space (~2GB).
-
-## Notes
-
-- All commands show execution plan by default (dry-run mode)
-- Add `--run` flag to actually execute commands
-- Results are saved to `results/` by default (override with `--output-dir`)
-- Use `--help` on any command for detailed options
