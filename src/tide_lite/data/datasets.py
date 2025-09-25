@@ -89,13 +89,129 @@ def load_quora(cfg: Dict) -> Tuple[Dataset, Dataset, Dataset]:
     max_samples = cfg.get("max_samples", None)
     seed = cfg.get("seed", 42)
     
-    # Load dataset
-    dataset = load_dataset(
-        "quora",
-        cache_dir=cache_dir,
-        split="train",
-        trust_remote_code=True  # Required for Quora dataset
-    )
+    # Try multiple sources for Quora dataset
+    dataset = None
+    
+    # Method 1: Try HuggingFace datasets with alternative sources
+    try:
+        logger.info("Attempting to load Quora from HuggingFace mirror...")
+        dataset = load_dataset(
+            "SetFit/qnli",  # Alternative source with similar format
+            cache_dir=cache_dir,
+            split="train"
+        )
+        logger.info("Loaded Quora-like dataset from SetFit/qnli")
+        
+        # Convert to Quora format
+        def convert_to_quora_format(examples):
+            return {
+                "questions": {
+                    "text": [examples["sentence1"], examples["sentence2"]]
+                },
+                "is_duplicate": examples["label"] == 0  # entailment = duplicate
+            }
+        
+        dataset = dataset.map(convert_to_quora_format, remove_columns=dataset.column_names)
+        
+    except Exception as e1:
+        logger.debug(f"SetFit/qnli failed: {e1}")
+        
+        # Method 2: Try another alternative dataset
+        try:
+            logger.info("Attempting to load from alternative source...")
+            dataset = load_dataset(
+                "embedding-data/QQP_triplets",  # Quora Question Pairs triplets
+                cache_dir=cache_dir,
+                split="train"
+            )
+            logger.info("Loaded Quora dataset from embedding-data/QQP_triplets")
+            
+            # Convert triplets format to standard format
+            def convert_triplets_to_quora(examples):
+                return {
+                    "questions": {
+                        "text": [examples["anchor"], examples["positive"]]
+                    },
+                    "is_duplicate": True  # All pairs in triplets are duplicates
+                }
+            
+            dataset = dataset.map(convert_triplets_to_quora, remove_columns=dataset.column_names)
+            
+        except Exception as e2:
+            logger.debug(f"embedding-data/QQP_triplets failed: {e2}")
+            
+            # Method 3: Try local cached file
+            local_quora_path = Path(cache_dir) / "quora_question_pairs.tsv"
+            if local_quora_path.exists():
+                logger.info(f"Loading Quora from local cache: {local_quora_path}")
+                df = pd.read_csv(local_quora_path, sep='\t')
+                
+                # Convert to dataset format
+                data_dict = {
+                    "questions": {
+                        "text": list(zip(df["question1"], df["question2"]))
+                    },
+                    "is_duplicate": df["is_duplicate"].tolist()
+                }
+                dataset = Dataset.from_dict(data_dict)
+                
+            else:
+                # Method 4: Use MS MARCO as fallback for retrieval evaluation
+                logger.warning("Quora dataset not available, using MS MARCO as fallback")
+                logger.info("Loading MS MARCO dataset for retrieval evaluation...")
+                
+                try:
+                    ms_marco = load_dataset(
+                        "ms_marco",
+                        "v1.1",
+                        cache_dir=cache_dir,
+                        split="train",
+                        trust_remote_code=True
+                    )
+                    
+                    # Convert MS MARCO to Quora-like format
+                    def convert_marco_to_quora(examples):
+                        # Use query and positive passage as duplicate pair
+                        return {
+                            "questions": {
+                                "text": [examples["query"], examples["passages"]["passage_text"][0]]
+                            },
+                            "is_duplicate": True
+                        }
+                    
+                    dataset = ms_marco.map(convert_marco_to_quora, remove_columns=ms_marco.column_names)
+                    logger.info("Using MS MARCO as retrieval dataset")
+                    
+                except Exception as e3:
+                    logger.error(f"All dataset loading methods failed")
+                    logger.info("\n" + "="*60)
+                    logger.info("QUORA DATASET UNAVAILABLE - Manual Download Required")
+                    logger.info("="*60)
+                    logger.info("Option 1: Download from Kaggle")
+                    logger.info("  1. Go to: https://www.kaggle.com/c/quora-question-pairs/data")
+                    logger.info("  2. Download train.csv")
+                    logger.info(f"  3. Save as: {cache_dir}/quora_question_pairs.tsv")
+                    logger.info("")
+                    logger.info("Option 2: Use alternative dataset")
+                    logger.info("  The system will use MS MARCO or other retrieval datasets")
+                    logger.info("")
+                    logger.info("Option 3: Skip Quora evaluation")
+                    logger.info("  Training will continue with STS-B only")
+                    logger.info("="*60)
+                    
+                    # Return empty datasets to continue without Quora
+                    empty_corpus = Dataset.from_dict({"text": [], "doc_id": []})
+                    empty_queries = Dataset.from_dict({"text": [], "query_id": []})
+                    empty_qrels = Dataset.from_dict({"query_id": [], "doc_id": [], "relevance": []})
+                    return empty_corpus, empty_queries, empty_qrels
+    
+    # If we have a dataset, process it
+    if dataset is None:
+        # This shouldn't happen, but handle it gracefully
+        empty_corpus = Dataset.from_dict({"text": [], "doc_id": []})
+        empty_queries = Dataset.from_dict({"text": [], "query_id": []})
+        empty_qrels = Dataset.from_dict({"query_id": [], "doc_id": [], "relevance": []})
+        return empty_corpus, empty_queries, empty_qrels
     
     # Filter out None questions
     dataset = dataset.filter(
