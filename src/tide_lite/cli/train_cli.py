@@ -12,7 +12,7 @@ from typing import Dict, Any
 
 from ..models.tide_lite import TIDELite, TIDELiteConfig
 from ..train.trainer import TIDELiteTrainer, TrainingConfig  
-from ..utils.config import ConfigLoader, TIDEConfig
+from ..utils.config import ConfigLoader, TIDEConfig, initialize_environment
 
 logger = logging.getLogger(__name__)
 
@@ -69,15 +69,13 @@ def create_training_config(tide_config: TIDEConfig) -> TrainingConfig:
         preservation_weight=tide_config.preservation_weight,
         tau_seconds=tide_config.tau_seconds,
         use_amp=tide_config.use_amp,
-        save_every_n_steps=tide_config.save_every,
-        eval_every_n_steps=tide_config.eval_every,
+        save_every=tide_config.save_every,
+        eval_every=tide_config.eval_every,
         output_dir=tide_config.out_dir,
-        checkpoint_dir=tide_config.checkpoint_dir,
+        cache_dir=tide_config.cache_dir,
         seed=tide_config.seed,
-        log_level=tide_config.log_level,
         dry_run=tide_config.dry_run,
-        device=tide_config.device,
-        temporal_enabled=tide_config.temporal_enabled,
+        skip_temporal=not tide_config.temporal_enabled,
     )
 
 
@@ -185,29 +183,26 @@ def main() -> int:
         model = TIDELite(model_config)
         
         # Log parameter summary
-        param_summary = model.get_parameter_summary()
-        logger.info(f"Total parameters: {param_summary['total_params']:,}")
-        logger.info(f"Trainable parameters: {param_summary['trainable_params']:,}")
-        logger.info(f"Extra TIDE parameters: {param_summary['extra_params']:,}")
+        extra_params = model.count_extra_parameters()
+        logger.info(f"Extra TIDE parameters: {extra_params:,}")
         
         # Create training configuration
         training_config = create_training_config(config)
         
         # Initialize trainer
         logger.info("Initializing trainer...")
-        trainer = TIDETrainer(model, training_config)
+        trainer = TIDELiteTrainer(training_config, model)
         
         # Run training or dry run
         if config.dry_run:
             logger.info("Executing dry run...")
-            summary = trainer.dry_run_summary()
-            logger.info("Dry run complete. Check output directory for summary.")
+            trainer.train()  # Will exit early in dry-run mode
+            logger.info("Dry run complete.")
         else:
             logger.info("Starting training...")
             logger.info("Press Ctrl+C to interrupt")
-            metrics = trainer.train()
+            trainer.train()
             logger.info("Training complete!")
-            logger.info(f"Final validation Spearman: {metrics['final_val_spearman']:.4f}")
             logger.info(f"Results saved to: {config.out_dir}")
         
         return 0
