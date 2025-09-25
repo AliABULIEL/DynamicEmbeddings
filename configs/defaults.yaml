@@ -81,6 +81,14 @@ consistency_weight: 0.01
 # Weight for base embedding preservation loss
 preservation_weight: 0.005
 
+# Multi-task learning ratio (STS-B:Temporal batches)
+# 1 means 1:1 alternation, 2 means 2:1 (2 STS-B per 1 temporal)
+mtl_ratio: 1
+
+# Lambda for temporal loss weight in multi-task learning
+# This replaces consistency_weight when using separate losses
+lambda_temporal: 0.1
+
 # Time constant for temporal loss (seconds) - default 1 day
 tau_seconds: 86400.0
 

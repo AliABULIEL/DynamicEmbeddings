@@ -21,7 +21,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from ..models.tide_lite import TIDELite, TIDELiteConfig
-from ..data.dataloaders import create_stsb_dataloaders
+from ..data.dataloaders import create_stsb_dataloaders, create_temporal_dataloaders
 from .losses import TIDELiteLoss
 
 logger = logging.getLogger(__name__)
@@ -51,6 +51,11 @@ class TrainingConfig:
         temporal_weight: Weight for temporal consistency loss.
         preservation_weight: Weight for preservation loss.
         tau_seconds: Time constant for temporal consistency.
+        
+        # Multi-task learning
+        mtl_ratio: Ratio of STS-B to temporal batches (1 = 1:1 alternation).
+        lambda_temporal: Weight for temporal loss in multi-task learning.
+        skip_temporal: Skip temporal training if dataset unavailable.
         
         # Data
         max_seq_length: Maximum sequence length.
@@ -89,6 +94,11 @@ class TrainingConfig:
     temporal_weight: float = 0.1
     preservation_weight: float = 0.05
     tau_seconds: float = 86400.0
+    
+    # Multi-task learning
+    mtl_ratio: int = 1
+    lambda_temporal: float = 0.1
+    skip_temporal: bool = False
     
     # Data
     max_seq_length: int = 128
@@ -168,9 +178,14 @@ class TIDELiteTrainer:
         self.optimizer = None
         self.scheduler = None
         self.scaler = None
-        self.train_loader = None
-        self.val_loader = None
-        self.test_loader = None
+        
+        # Separate dataloaders for multi-task learning
+        self.stsb_train_loader = None
+        self.stsb_val_loader = None
+        self.stsb_test_loader = None
+        self.temporal_train_loader = None
+        self.temporal_val_loader = None
+        self.temporal_test_loader = None
         
         # Metrics tracking
         self.metrics = {
@@ -211,16 +226,18 @@ class TIDELiteTrainer:
         logger.info(f"Setup optimizer with {len(trainable_params)} parameter groups")
     
     def setup_dataloaders(self) -> None:
-        """Setup dataloaders for STS-B."""
-        logger.info("Setting up STS-B dataloaders")
+        """Setup dataloaders for multi-task learning."""
+        logger.info("Setting up dataloaders for multi-task learning")
         
         data_config = {
             "cache_dir": self.config.cache_dir,
             "seed": self.config.seed,
             "model_name": self.config.encoder_name,
+            "skip_temporal": self.config.skip_temporal,
         }
         
-        self.train_loader, self.val_loader, self.test_loader = create_stsb_dataloaders(
+        # Always create STS-B dataloaders
+        self.stsb_train_loader, self.stsb_val_loader, self.stsb_test_loader = create_stsb_dataloaders(
             cfg=data_config,
             batch_size=self.config.batch_size,
             eval_batch_size=self.config.eval_batch_size,
@@ -228,9 +245,37 @@ class TIDELiteTrainer:
             num_workers=self.config.num_workers,
         )
         
-        logger.info(f"Train batches: {len(self.train_loader)}")
-        logger.info(f"Val batches: {len(self.val_loader)}")
-        logger.info(f"Test batches: {len(self.test_loader)}")
+        logger.info(f"STS-B Train batches: {len(self.stsb_train_loader)}")
+        logger.info(f"STS-B Val batches: {len(self.stsb_val_loader)}")
+        logger.info(f"STS-B Test batches: {len(self.stsb_test_loader)}")
+        
+        # For compatibility with old code
+        self.train_loader = self.stsb_train_loader
+        self.val_loader = self.stsb_val_loader
+        self.test_loader = self.stsb_test_loader
+        
+        # Try to create temporal dataloaders if not skipped
+        if not self.config.skip_temporal:
+            temporal_loaders = create_temporal_dataloaders(
+                cfg=data_config,
+                batch_size=self.config.batch_size,
+                max_seq_length=self.config.max_seq_length,
+                num_workers=self.config.num_workers,
+                skip_if_missing=True,
+            )
+            
+            if temporal_loaders is not None:
+                self.temporal_train_loader, self.temporal_val_loader, self.temporal_test_loader = temporal_loaders
+                logger.info(f"Temporal Train batches: {len(self.temporal_train_loader)}")
+                logger.info(f"Temporal Val batches: {len(self.temporal_val_loader)}")
+                logger.info(f"Temporal Test batches: {len(self.temporal_test_loader)}")
+                logger.info(f"Multi-task learning enabled with ratio {self.config.mtl_ratio}:1 (STS-B:Temporal)")
+            else:
+                logger.warning("No temporal data available - training with STS-B only")
+                self.config.lambda_temporal = 0.0
+        else:
+            logger.info("Temporal training skipped (skip_temporal=True)")
+            self.config.lambda_temporal = 0.0
     
     def train_epoch(self, epoch: int) -> Dict[str, float]:
         """Train for one epoch.

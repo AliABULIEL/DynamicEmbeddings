@@ -90,6 +90,116 @@ def create_stsb_dataloaders(
     return train_loader, val_loader, test_loader
 
 
+def create_temporal_dataloaders(
+    cfg: Dict,
+    batch_size: int = 32,
+    max_seq_length: int = 128,
+    num_workers: int = 2,
+    skip_if_missing: bool = False,
+) -> Optional[Tuple[DataLoader, DataLoader, DataLoader]]:
+    """Create temporal (TimeQA/TempLAMA) dataloaders for temporal consistency.
+    
+    Args:
+        cfg: Configuration dictionary.
+        batch_size: Training batch size.
+        max_seq_length: Maximum sequence length.
+        num_workers: Number of dataloader workers.
+        skip_if_missing: Return None if dataset is missing instead of raising error.
+        
+    Returns:
+        Tuple of (train_loader, val_loader, test_loader) or None if skipped.
+    """
+    logger.info("Creating temporal dataloaders")
+    
+    # Check if we should skip temporal
+    if cfg.get("skip_temporal", False):
+        logger.info("Skipping temporal dataloaders (skip_temporal=True)")
+        return None
+    
+    try:
+        # Load temporal dataset
+        dataset = load_timeqa(cfg)
+        
+        # Split into train/val/test (80/10/10)
+        total_size = len(dataset)
+        train_size = int(0.8 * total_size)
+        val_size = int(0.1 * total_size)
+        test_size = total_size - train_size - val_size
+        
+        # Use dataset.train_test_split for splitting
+        splits = dataset.train_test_split(
+            test_size=(val_size + test_size) / total_size,
+            seed=cfg.get("seed", 42)
+        )
+        train_dataset = splits["train"]
+        
+        # Split remaining into val and test
+        remaining = splits["test"]
+        val_test_splits = remaining.train_test_split(
+            test_size=test_size / (val_size + test_size),
+            seed=cfg.get("seed", 42)
+        )
+        val_dataset = val_test_splits["train"]
+        test_dataset = val_test_splits["test"]
+        
+        # Get encoder name
+        encoder_name = cfg.get("model_name", "sentence-transformers/all-MiniLM-L6-v2")
+        
+        # Create collator for temporal data
+        # This collator should preserve timestamps from the dataset
+        collator = create_collator(
+            "temporal",
+            tokenizer=encoder_name,
+            max_length=max_seq_length,
+        )
+        
+        # Create dataloaders
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            collate_fn=collator,
+            num_workers=num_workers,
+            pin_memory=torch.cuda.is_available(),
+            drop_last=False,
+        )
+        
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            collate_fn=collator,
+            num_workers=num_workers,
+            pin_memory=torch.cuda.is_available(),
+            drop_last=False,
+        )
+        
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            collate_fn=collator,
+            num_workers=num_workers,
+            pin_memory=torch.cuda.is_available(),
+            drop_last=False,
+        )
+        
+        logger.info(
+            f"Created temporal dataloaders - Train: {len(train_loader)} batches, "
+            f"Val: {len(val_loader)} batches, Test: {len(test_loader)} batches"
+        )
+        
+        return train_loader, val_loader, test_loader
+        
+    except FileNotFoundError as e:
+        if skip_if_missing:
+            logger.warning(f"Temporal dataset not found: {e}")
+            logger.warning("Training without temporal consistency loss")
+            return None
+        else:
+            raise
+
+
 def create_quora_dataloaders(
     cfg: Dict,
     batch_size: int = 128,

@@ -20,7 +20,7 @@ echo -e "\n[Stage 1] Environment Check"
 echo "--------------------------------"
 
 # Check GPU availability
-python -c "
+python3 -c "
 import torch
 if torch.cuda.is_available():
     print(f'✓ GPU available: {torch.cuda.get_device_name(0)}')
@@ -30,7 +30,7 @@ else:
 "
 
 # Check dependencies
-python -c "
+python3 -c "
 import transformers
 import datasets
 import scipy
@@ -45,7 +45,7 @@ echo -e "\n[Stage 2] Data Preparation"
 echo "--------------------------------"
 
 # Download and cache datasets
-python -c "
+python3 -c "
 from src.tide_lite.data.datasets import load_stsb, load_quora
 
 print('Downloading/caching STS-B...')
@@ -79,7 +79,7 @@ echo "--------------------------------"
 
 # Evaluate baseline models for comparison
 echo "Evaluating MiniLM baseline on STS-B..."
-python -m src.tide_lite.cli.eval_stsb \
+python3 -m src.tide_lite.cli.eval_stsb \
     --model-name "sentence-transformers/all-MiniLM-L6-v2" \
     --model-type baseline \
     --output-dir "${OUTPUT_DIR}/baselines/minilm" \
@@ -87,7 +87,7 @@ python -m src.tide_lite.cli.eval_stsb \
     --device cuda:${GPU_ID}
 
 echo "Evaluating MiniLM baseline on Quora..."
-python -m src.tide_lite.cli.eval_quora \
+python3 -m src.tide_lite.cli.eval_quora \
     --model-name "sentence-transformers/all-MiniLM-L6-v2" \
     --model-type baseline \
     --output-dir "${OUTPUT_DIR}/baselines/minilm" \
@@ -102,7 +102,7 @@ echo -e "\n[Stage 4] TIDE-Lite Training"
 echo "--------------------------------"
 
 # Main training run
-python -m src.tide_lite.cli.train \
+python3 -m src.tide_lite.cli.train \
     --config configs/tide_lite.yaml \
     --output-dir "${OUTPUT_DIR}/tide_lite" \
     --num-epochs 5 \
@@ -131,7 +131,7 @@ echo "--------------------------------"
 
 # Evaluate on STS-B (without temporal)
 echo "Evaluating TIDE-Lite on STS-B (baseline mode)..."
-python -m src.tide_lite.cli.eval_stsb \
+python3 -m src.tide_lite.cli.eval_stsb \
     --model-path "${MODEL_PATH}" \
     --output-dir "${OUTPUT_DIR}/eval/stsb_baseline" \
     --batch-size 128 \
@@ -139,7 +139,7 @@ python -m src.tide_lite.cli.eval_stsb \
 
 # Evaluate on STS-B (with temporal if available)
 echo "Evaluating TIDE-Lite on STS-B (temporal mode)..."
-python -m src.tide_lite.cli.eval_stsb \
+python3 -m src.tide_lite.cli.eval_stsb \
     --model-path "${MODEL_PATH}" \
     --output-dir "${OUTPUT_DIR}/eval/stsb_temporal" \
     --use-temporal \
@@ -148,7 +148,7 @@ python -m src.tide_lite.cli.eval_stsb \
 
 # Evaluate on Quora (without temporal)
 echo "Evaluating TIDE-Lite on Quora (baseline mode)..."
-python -m src.tide_lite.cli.eval_quora \
+python3 -m src.tide_lite.cli.eval_quora \
     --model-path "${MODEL_PATH}" \
     --output-dir "${OUTPUT_DIR}/eval/quora_baseline" \
     --batch-size 128 \
@@ -157,7 +157,7 @@ python -m src.tide_lite.cli.eval_quora \
 
 # Evaluate on Quora (with temporal)
 echo "Evaluating TIDE-Lite on Quora (temporal mode)..."
-python -m src.tide_lite.cli.eval_quora \
+python3 -m src.tide_lite.cli.eval_quora \
     --model-path "${MODEL_PATH}" \
     --output-dir "${OUTPUT_DIR}/eval/quora_temporal" \
     --use-temporal \
@@ -168,7 +168,7 @@ python -m src.tide_lite.cli.eval_quora \
 # Temporal dataset evaluation (if available)
 if [ "$EVAL_TEMPORAL" = true ]; then
     echo "Evaluating on temporal datasets..."
-    python -m src.tide_lite.cli.eval_temporal \
+    python3 -m src.tide_lite.cli.eval_temporal \
         --model-path "${MODEL_PATH}" \
         --output-dir "${OUTPUT_DIR}/eval/temporal" \
         --dataset timeqa \
@@ -183,17 +183,17 @@ echo -e "\n[Stage 6] Results Aggregation"
 echo "--------------------------------"
 
 # Aggregate all results
-python -m src.tide_lite.cli.aggregate \
+python3 -m src.tide_lite.cli.aggregate \
     --experiment-dir "${OUTPUT_DIR}" \
     --output-file "${OUTPUT_DIR}/results_summary.json"
 
 # Generate plots
-python -m src.tide_lite.cli.plots \
+python3 -m src.tide_lite.cli.plots \
     --results-file "${OUTPUT_DIR}/results_summary.json" \
     --output-dir "${OUTPUT_DIR}/plots"
 
 # Generate final report
-python -m src.tide_lite.cli.report \
+python3 -m src.tide_lite.cli.report \
     --experiment-dir "${OUTPUT_DIR}" \
     --output-file "${OUTPUT_DIR}/final_report.md"
 
@@ -203,7 +203,7 @@ python -m src.tide_lite.cli.report \
 echo -e "\n[Stage 7] Model Comparison"
 echo "--------------------------------"
 
-python -c "
+python3 -c "
 import json
 from pathlib import Path
 
@@ -222,7 +222,7 @@ if 'stsb' in results:
     for model, score in results['stsb'].items():
         print(f'  {model}: {score:.4f}')
 
-# Quora Results  
+# Quora Results
 if 'quora' in results:
     print('\nQuora Retrieval Recall@10:')
     for model, metrics in results['quora'].items():

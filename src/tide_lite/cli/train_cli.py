@@ -49,12 +49,9 @@ def create_training_config(tide_config: TIDEConfig) -> TrainingConfig:
     """
     return TrainingConfig(
         encoder_name=tide_config.model_name,
-        hidden_dim=tide_config.hidden_dim,
         time_encoding_dim=tide_config.time_dims,
         mlp_hidden_dim=tide_config.time_mlp_hidden,
         mlp_dropout=tide_config.mlp_dropout,
-        freeze_encoder=tide_config.freeze_encoder,
-        pooling_strategy=tide_config.pooling_strategy,
         gate_activation=tide_config.gate_activation,
         batch_size=tide_config.batch_size,
         eval_batch_size=tide_config.eval_batch_size,

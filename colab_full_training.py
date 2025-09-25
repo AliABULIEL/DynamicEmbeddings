@@ -90,7 +90,7 @@ import time
 start_time = time.time()
 
 # Run training with production parameters
-!python scripts/train.py --config configs/colab_gpu.yaml
+!python3 scripts/train.py --config configs/colab_gpu.yaml
 
 training_time = time.time() - start_time
 print(f"\n⏱️ Total training time: {training_time/60:.2f} minutes")
@@ -99,7 +99,7 @@ print(f"\n⏱️ Total training time: {training_time/60:.2f} minutes")
 # CELL 5: Run Comprehensive Evaluation
 # ============================================================
 # Evaluate the trained model
-!python scripts/run_evaluation.py --checkpoint-dir results/colab_gpu_full
+!python3 scripts/run_evaluation.py --checkpoint-dir results/colab_gpu_full
 
 # Display results
 import json
@@ -116,14 +116,14 @@ with open('results/colab_gpu_full/eval/eval_results.json') as f:
 print("Training baseline models for comparison...")
 
 # 1. Frozen Baseline (no temporal module)
-!python scripts/train.py \
+!python3 scripts/train.py \
     --config configs/colab_gpu.yaml \
     --temporal-weight 0.0 \
     --output-dir results/baseline_frozen \
     --num-epochs 1
 
 # 2. Smaller TIDE-Lite variant
-!python scripts/train.py \
+!python3 scripts/train.py \
     --config configs/colab_gpu.yaml \
     --mlp-hidden-dim 64 \
     --output-dir results/tide_small \
@@ -140,7 +140,7 @@ import seaborn as sns
 benchmarks = {
     'Model': [
         'TIDE-Lite (Full)',
-        'TIDE-Lite (Small)', 
+        'TIDE-Lite (Small)',
         'Frozen MiniLM (Baseline)',
         'Fine-tuned MiniLM*',
         'BERT-base*',
@@ -239,43 +239,43 @@ import numpy as np
 from datetime import datetime, timedelta
 
 # Analyze temporal modulation patterns
-checkpoint = torch.load('results/colab_gpu_full/checkpoints/checkpoint_final.pt', 
+checkpoint = torch.load('results/colab_gpu_full/checkpoints/checkpoint_final.pt',
                        map_location='cpu', weights_only=False)
 
 if 'temporal_gate_state_dict' in checkpoint:
     gate_state = checkpoint['temporal_gate_state_dict']
-    
+
     # Analyze weight distributions
     fc1_weight = gate_state['fc1.weight']
     fc2_weight = gate_state['fc2.weight']
-    
+
     plt.figure(figsize=(12, 4))
-    
+
     # Weight distribution
     plt.subplot(1, 3, 1)
     plt.hist(fc1_weight.flatten().numpy(), bins=50, alpha=0.7)
     plt.title('Temporal MLP Layer 1 Weights')
     plt.xlabel('Weight Value')
     plt.ylabel('Count')
-    
+
     plt.subplot(1, 3, 2)
     plt.hist(fc2_weight.flatten().numpy(), bins=50, alpha=0.7)
     plt.title('Temporal MLP Layer 2 Weights')
     plt.xlabel('Weight Value')
     plt.ylabel('Count')
-    
+
     # Visualize gate activation patterns
     plt.subplot(1, 3, 3)
     times = np.linspace(0, 365*24*3600, 1000)  # One year in seconds
     time_encoding_dim = 64
-    
+
     # Simple visualization of temporal patterns
     patterns = np.sin(2 * np.pi * times / (86400 * np.arange(1, 6)[:, None]))
     plt.plot(times / 86400, patterns.T, alpha=0.5)
     plt.title('Temporal Encoding Patterns')
     plt.xlabel('Days')
     plt.ylabel('Encoding Value')
-    
+
     plt.tight_layout()
     plt.savefig('results/temporal_analysis.png', dpi=150)
     plt.show()

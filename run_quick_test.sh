@@ -10,7 +10,7 @@ echo "================================================"
 
 # 1. Test imports and basic functionality
 echo "1. Testing imports and model creation..."
-python -c "
+python3 -c "
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path.cwd()))
@@ -45,7 +45,7 @@ print('✅ All core components working!')
 
 # 2. Test training components (dry-run only)
 echo -e "\n2. Testing training pipeline (dry-run)..."
-python -c "
+python3 -c "
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path.cwd()))
@@ -74,7 +74,7 @@ print('✅ Training pipeline works (dry-run tested)!')
 
 # 3. Test individual model components
 echo -e "\n3. Testing model components..."
-python -c "
+python3 -c "
 import sys
 from pathlib import Path
 import torch
@@ -104,7 +104,7 @@ print('✅ All model components working!')
 
 # 4. Optional: Test data loading with small samples
 echo -e "\n4. Testing data loading (optional, may require downloads)..."
-python -c "
+python3 -c "
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path.cwd()))

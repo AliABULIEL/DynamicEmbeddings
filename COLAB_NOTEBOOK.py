@@ -28,21 +28,21 @@ print("✅ All packages installed!")
 # ============================================
 # CELL 3: Quick Smoke Test (5 minutes)
 # ============================================
-!python scripts/train.py --config configs/smoke.yaml --device cuda --batch-size 32
+!python3 scripts/train.py --config configs/smoke.yaml --device cuda --batch-size 32
 
 print("✅ Smoke test complete!")
 
 # ============================================
 # CELL 4: Full Training (30 minutes)
 # ============================================
-!python scripts/train.py --config configs/colab.yaml
+!python3 scripts/train.py --config configs/colab.yaml
 
 print("✅ Training complete!")
 
 # ============================================
 # CELL 5: Run Evaluation
 # ============================================
-!python scripts/run_evaluation.py --checkpoint-dir results/colab
+!python3 scripts/run_evaluation.py --checkpoint-dir results/colab
 
 # ============================================
 # CELL 6: Display Results
@@ -106,7 +106,7 @@ ax2.grid(True, alpha=0.3)
 
 # Add annotations
 for i, model in enumerate(['Baseline', 'Small', 'Base', 'YOURS']):
-    ax2.annotate(model, (params[i], scores[i]), 
+    ax2.annotate(model, (params[i], scores[i]),
                 xytext=(5, 5), textcoords='offset points')
 
 plt.suptitle('TIDE-Lite Benchmark Results', fontsize=16, fontweight='bold')

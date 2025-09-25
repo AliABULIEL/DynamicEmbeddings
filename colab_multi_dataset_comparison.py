@@ -61,7 +61,7 @@ except:
 mrpc = load_dataset("glue", "mrpc")
 datasets["mrpc"] = {
     "train": mrpc["train"],
-    "val": mrpc["validation"], 
+    "val": mrpc["validation"],
     "test": mrpc["test"],
     "type": "paraphrase",
     "metric": "accuracy"
@@ -133,11 +133,11 @@ model_configs = {
 
 def train_and_evaluate(model_config, dataset_name, dataset):
     """Train model and evaluate on specific dataset"""
-    
+
     print(f"\n🔄 Training {model_config['name']} on {dataset_name.upper()}...")
-    
+
     output_dir = f"results/{dataset_name}/{model_config['name'].replace(' ', '_')}"
-    
+
     # Create config file
     config = f"""
 encoder_name: "sentence-transformers/all-MiniLM-L6-v2"
@@ -150,25 +150,25 @@ use_amp: true
 output_dir: "{output_dir}"
 device: "cuda"
     """
-    
+
     config_path = f"configs/temp_{dataset_name}_{model_config['name'].replace(' ', '_')}.yaml"
     with open(config_path, 'w') as f:
         f.write(config)
-    
+
     # Run training
     start_time = time.time()
-    !python scripts/train.py --config {config_path} --dataset {dataset_name} 2>&1 | tail -20
+    !python3 scripts/train.py --config {config_path} --dataset {dataset_name} 2>&1 | tail -20
     training_time = time.time() - start_time
-    
+
     # Run evaluation
-    !python scripts/run_evaluation.py --checkpoint-dir {output_dir} --dataset {dataset_name}
-    
+    !python3 scripts/run_evaluation.py --checkpoint-dir {output_dir} --dataset {dataset_name}
+
     # Load results
     results_path = f"{output_dir}/eval/eval_results.json"
     try:
         with open(results_path) as f:
             results = json.load(f)
-            
+
         return {
             "model": model_config["name"],
             "dataset": dataset_name,
@@ -197,7 +197,7 @@ for dataset_name in selected_datasets:
     print(f"\n{'='*60}")
     print(f"DATASET: {dataset_name.upper()}")
     print(f"{'='*60}")
-    
+
     for config_key, config in model_configs.items():
         result = train_and_evaluate(config, dataset_name, datasets[dataset_name])
         if result:
@@ -232,10 +232,10 @@ for model in results_df['model'].unique():
     avg_spearman = model_data['spearman'].mean()
     params = model_data['params'].iloc[0]
     color = model_data['color'].iloc[0]
-    
-    ax.scatter(params/1000, avg_spearman, s=150, 
+
+    ax.scatter(params/1000, avg_spearman, s=150,
               label=model, color=color, alpha=0.7, edgecolors='black')
-    
+
 ax.set_xscale('log')
 ax.set_xlabel('Parameters (K)')
 ax.set_ylabel('Average Spearman')
@@ -260,7 +260,7 @@ ax.grid(True, alpha=0.3)
 # 4. Heatmap of All Results
 ax = axes[1, 0]
 heatmap_data = results_df.pivot(index='model', columns='dataset', values='spearman')
-sns.heatmap(heatmap_data, annot=True, fmt='.3f', cmap='RdYlGn', 
+sns.heatmap(heatmap_data, annot=True, fmt='.3f', cmap='RdYlGn',
             ax=ax, vmin=0.80, vmax=0.90, cbar_kws={'label': 'Spearman'})
 ax.set_title('Performance Heatmap', fontsize=14, fontweight='bold')
 ax.set_xlabel('')
@@ -338,7 +338,7 @@ report = f"""
 ### Performance by Model
 {results_df.groupby('model')[['spearman', 'params', 'training_time']].mean().round(4).to_markdown()}
 
-### Performance by Dataset  
+### Performance by Dataset
 {results_df.groupby('dataset')[['spearman']].agg(['mean', 'std', 'max']).round(4).to_markdown()}
 
 ### Best Model per Dataset
@@ -365,7 +365,7 @@ report = f"""
 ## Recommendations
 
 ✅ **Production Use**: TIDE-Lite Large (107K params) - best performance
-✅ **Resource Constrained**: TIDE-Lite Base (54K params) - good balance  
+✅ **Resource Constrained**: TIDE-Lite Base (54K params) - good balance
 ✅ **Edge Deployment**: TIDE-Lite Small (27K params) - minimal overhead
 
 ---

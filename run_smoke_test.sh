@@ -8,12 +8,12 @@ echo "================================================"
 
 # 1. Setup environment
 echo "1. Checking environment..."
-python -c "import torch; print(f'PyTorch: {torch.__version__}')" || { echo "❌ PyTorch not installed"; exit 1; }
-python -c "import transformers; print(f'Transformers: {transformers.__version__}')" || { echo "❌ Transformers not installed"; exit 1; }
+python3 -c "import torch; print(f'PyTorch: {torch.__version__}')" || { echo "❌ PyTorch not installed"; exit 1; }
+python3 -c "import transformers; print(f'Transformers: {transformers.__version__}')" || { echo "❌ Transformers not installed"; exit 1; }
 
 # 2. Run integration smoke test (handles missing datasets gracefully)
 echo -e "\n2. Running integration smoke test..."
-python tests/test_integration_smoke.py || true  # Continue even if some tests fail
+python3 tests/test_integration_smoke.py || true  # Continue even if some tests fail
 
 # 3. Run unit tests (skip if pytest not available)
 echo -e "\n3. Running unit tests..."
@@ -28,7 +28,7 @@ fi
 
 # 4. Dry-run training (no actual training)
 echo -e "\n4. Testing training pipeline (dry-run)..."
-python -c "
+python3 -c "
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path.cwd()))
@@ -55,7 +55,7 @@ print('✓ Training pipeline works!')
 
 # 5. Test model creation and encoding
 echo -e "\n5. Testing model APIs..."
-python -c "
+python3 -c "
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path.cwd()))
@@ -82,7 +82,7 @@ print(f'Extra parameters: {tide.count_extra_parameters():,}')
 
 # 6. Verify data loading (optional - may fail if network issues)
 echo -e "\n6. Testing data loaders (optional)..."
-python -c "
+python3 -c "
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path.cwd()))
@@ -126,7 +126,7 @@ CORE_PASS=true
 DATA_WARN=false
 
 # Always check if core components work
-python -c "
+python3 -c "
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path.cwd()))
