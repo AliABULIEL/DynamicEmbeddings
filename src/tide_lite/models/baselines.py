@@ -139,6 +139,59 @@ class BaselineEncoder(nn.Module):
         """
         embeddings, _ = self.forward(input_ids, attention_mask)
         return embeddings
+    
+    def encode_texts(
+        self,
+        texts: List[str],
+        batch_size: int = 32,
+    ) -> torch.Tensor:
+        """Encode text strings into embeddings.
+        
+        Args:
+            texts: List of text strings to encode.
+            batch_size: Batch size for encoding.
+            
+        Returns:
+            Embeddings tensor [num_texts, hidden_dim].
+        """
+        all_embeddings = []
+        
+        # Process in batches
+        for i in range(0, len(texts), batch_size):
+            batch_texts = texts[i:i + batch_size]
+            
+            # Tokenize
+            encoded = self.tokenizer(
+                batch_texts,
+                max_length=self.max_seq_length,
+                padding=True,
+                truncation=True,
+                return_tensors="pt"
+            )
+            
+            # Move to same device as model
+            encoded = {k: v.to(self.encoder.device) for k, v in encoded.items()}
+            
+            # Encode
+            with torch.no_grad():
+                embeddings = self.encode_base(
+                    encoded["input_ids"],
+                    encoded["attention_mask"]
+                )
+            
+            all_embeddings.append(embeddings.cpu())
+        
+        return torch.cat(all_embeddings, dim=0)
+    
+    def count_extra_parameters(self) -> int:
+        """Count extra parameters beyond base encoder.
+        
+        For baselines, this is 0 as they use frozen encoders.
+        
+        Returns:
+            Number of extra parameters (0 for baselines).
+        """
+        return 0
 
 
 def load_baseline(

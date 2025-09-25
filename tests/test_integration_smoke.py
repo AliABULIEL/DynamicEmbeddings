@@ -20,7 +20,7 @@ import argparse
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.tide_lite.data.datasets import load_stsb, load_quora, load_timeqa
-from src.tide_lite.models import TIDELite, TIDELiteConfig, MiniLMBaseline
+from src.tide_lite.models import TIDELite, TIDELiteConfig, BaselineEncoder, load_minilm_baseline
 from src.tide_lite.cli.train import main as train_main
 from src.tide_lite.cli.eval_stsb import main as eval_stsb_main  
 from src.tide_lite.cli.eval_quora import main as eval_quora_main
@@ -131,7 +131,7 @@ class TestModelAPIs:
     
     def test_baseline_model_api(self):
         """Test MiniLM baseline encoder API."""
-        model = MiniLMBaseline()
+        model = load_minilm_baseline()
         
         # Test texts
         texts = [
@@ -207,7 +207,7 @@ class TestModelAPIs:
     def test_model_parameter_counts(self):
         """Test extra parameter counting."""
         # Baseline should have 0 extra parameters
-        baseline = MiniLMBaseline()
+        baseline = load_minilm_baseline()
         assert baseline.count_extra_parameters() == 0
         
         # TIDE-Lite should have extra parameters
@@ -333,7 +333,7 @@ class TestEndToEndFlow:
             texts.append(sample["sentence2"])
         
         # Create model
-        model = MiniLMBaseline()
+        model = load_minilm_baseline()
         
         # Encode texts
         embeddings = model.encode_texts(texts, batch_size=2)

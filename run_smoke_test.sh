@@ -37,11 +37,11 @@ python -m src.tide_lite.cli.train \
 # 5. Test model creation and encoding
 echo -e "\n5. Testing model APIs..."
 python -c "
-from src.tide_lite.models import MiniLMBaseline, TIDELite, TIDELiteConfig
+from src.tide_lite.models import load_minilm_baseline, TIDELite, TIDELiteConfig
 import torch
 
 # Test baseline
-baseline = MiniLMBaseline()
+baseline = load_minilm_baseline()
 texts = ['Test sentence one.', 'Test sentence two.']
 emb = baseline.encode_texts(texts, batch_size=2)
 print(f'Baseline embeddings shape: {emb.shape}')

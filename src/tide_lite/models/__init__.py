@@ -9,12 +9,10 @@ All models expose the same interface:
 from .tide_lite import TIDELite, TIDELiteConfig
 from .baselines import (
     BaselineEncoder,
-    MiniLMBaseline,
-    E5BaseBaseline,
-    BGEBaseBaseline,
     load_baseline,
-    BaselineComparison,
-    create_baseline_suite,
+    load_minilm_baseline,
+    load_e5_base_baseline,
+    load_bge_base_baseline,
 )
 
 __all__ = [
@@ -23,11 +21,8 @@ __all__ = [
     "TIDELiteConfig",
     # Baselines
     "BaselineEncoder",
-    "MiniLMBaseline",
-    "E5BaseBaseline",
-    "BGEBaseBaseline",
     "load_baseline",
-    # Utilities
-    "BaselineComparison",
-    "create_baseline_suite",
+    "load_minilm_baseline",
+    "load_e5_base_baseline",
+    "load_bge_base_baseline",
 ]
