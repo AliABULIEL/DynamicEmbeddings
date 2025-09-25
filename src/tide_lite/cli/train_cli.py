@@ -12,7 +12,7 @@ from typing import Dict, Any
 
 from ..models.tide_lite import TIDELite, TIDELiteConfig
 from ..train.trainer import TIDELiteTrainer, TrainingConfig  
-from ..utils.config import ConfigLoader, TIDEConfig, initialize_environment
+from ..utils.config import ConfigLoader, TIDEConfig
 
 logger = logging.getLogger(__name__)
 

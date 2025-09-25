@@ -1,8 +1,7 @@
 """Utility functions for TIDE-Lite."""
 
-from .config import setup_logging, set_global_seed
+from .config import setup_logging
 
 __all__ = [
     "setup_logging",
-    "set_global_seed",
 ]
