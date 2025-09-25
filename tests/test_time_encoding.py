@@ -3,7 +3,7 @@
 import pytest
 import torch
 
-from tide_lite.utils.common import sinusoidal_time_encoding
+from src.tide_lite.models.tide_lite import SinusoidalTimeEncoding
 
 
 def test_sinusoidal_time_encoding():
@@ -11,11 +11,14 @@ def test_sinusoidal_time_encoding():
     batch_size = 4
     dims = 32
     
+    # Create encoder
+    encoder = SinusoidalTimeEncoding(encoding_dim=dims)
+    
     # Create sample timestamps
     timestamps = torch.tensor([0.0, 100.0, 1000.0, 10000.0])
     
     # Generate encodings
-    encodings = sinusoidal_time_encoding(timestamps, dims=dims)
+    encodings = encoder(timestamps)
     
     # Check shape
     assert encodings.shape == (batch_size, dims)

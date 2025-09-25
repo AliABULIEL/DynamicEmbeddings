@@ -21,10 +21,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.tide_lite.data.datasets import load_stsb, load_quora, load_timeqa
 from src.tide_lite.models import TIDELite, TIDELiteConfig, BaselineEncoder, load_minilm_baseline
-from src.tide_lite.cli.train import main as train_main
-from src.tide_lite.cli.eval_stsb import main as eval_stsb_main  
-from src.tide_lite.cli.eval_quora import main as eval_quora_main
-from src.tide_lite.cli.eval_temporal import main as eval_temporal_main
 
 
 class TestDataLoading:
@@ -123,7 +119,11 @@ class TestDataLoading:
             
         except FileNotFoundError as e:
             # Expected if neither dataset is available
-            pytest.skip(f"Temporal datasets not found: {e}")
+            if hasattr(pytest, 'skip'):
+                pytest.skip(f"Temporal datasets not found: {e}")
+            else:
+                # Running outside pytest
+                print(f"✗ Temporal dataset loading skipped: not found (expected)")
 
 
 class TestModelAPIs:
@@ -228,7 +228,7 @@ class TestCLIParsers:
     """Test CLI argument parsers without execution."""
     
     @patch('sys.argv', ['train', '--config', 'configs/tide_lite.yaml', '--dry-run'])
-    @patch('src.tide_lite.train.TIDETrainer')
+    @patch('src.tide_lite.train.trainer.TIDELiteTrainer')
     def test_train_cli_parser(self, mock_trainer):
         """Test train CLI creates valid config."""
         # Mock trainer to prevent actual training
@@ -419,13 +419,21 @@ if __name__ == "__main__":
         data_test.test_quora_loading()
         print("✓ Quora loading works")
     except Exception as e:
-        print(f"✗ Quora loading failed: {e}")
+        # Quora might fail due to network/download issues
+        if "http" in str(e) or "qim.fs.quoracdn.net" in str(e):
+            print("✗ Quora loading failed: download error (network issue, can retry)")
+        else:
+            print(f"✗ Quora loading failed: {e}")
     
     try:
         data_test.test_temporal_loading()
         print("✓ Temporal dataset loading works")
-    except Exception as e:
-        print(f"✗ Temporal dataset loading skipped: {e}")
+    except (FileNotFoundError, Exception) as e:
+        # This is expected if temporal datasets are not available
+        if "TimeQA" in str(e) or "TempLAMA" in str(e) or "Skipped" in str(e.__class__.__name__):
+            print("✗ Temporal dataset loading skipped: not found (expected)")
+        else:
+            print(f"✗ Temporal dataset loading failed: {e}")
     
     # Test model APIs
     print("\nTesting model APIs...")

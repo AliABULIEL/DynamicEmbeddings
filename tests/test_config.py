@@ -96,14 +96,12 @@ class TestTrainingConfig:
             learning_rate=1e-4,
             num_epochs=10,
             warmup_steps=1000,
-            gradient_clip_norm=1.0,
-            eval_interval=100,
-            save_interval=500,
-            patience=5,
-            temperature=1.0,
-            loss_type="cosine",
-            optimizer="adam",
-            scheduler="linear"
+            gradient_clip=1.0,
+            eval_every=100,
+            save_every=500,
+            temporal_weight=0.1,
+            preservation_weight=0.05,
+            tau_seconds=86400.0
         )
         
         assert config.batch_size == 32
@@ -132,48 +130,46 @@ class TestTrainingConfig:
         config = TrainingConfig(learning_rate=0.0)
         assert config.learning_rate == 0.0  # Config accepts it, error at runtime
     
-    def test_loss_type_validation(self):
-        """Test loss type validation."""
-        valid_loss_types = ["cosine", "contrastive", "triplet"]
-        
-        for loss_type in valid_loss_types:
-            config = TrainingConfig(loss_type=loss_type)
-            assert config.loss_type == loss_type
+    def test_temporal_weight_validation(self):
+        """Test temporal weight validation."""
+        # Valid weights
+        for weight in [0.0, 0.1, 0.5, 1.0]:
+            config = TrainingConfig(temporal_weight=weight)
+            assert config.temporal_weight == weight
     
-    def test_optimizer_validation(self):
-        """Test optimizer validation."""
-        valid_optimizers = ["adam", "adamw", "sgd"]
-        
-        for optimizer in valid_optimizers:
-            config = TrainingConfig(optimizer=optimizer)
-            assert config.optimizer == optimizer
+    def test_preservation_weight_validation(self):
+        """Test preservation weight validation."""
+        # Valid weights
+        for weight in [0.0, 0.05, 0.1, 0.5]:
+            config = TrainingConfig(preservation_weight=weight)
+            assert config.preservation_weight == weight
     
-    def test_scheduler_validation(self):
-        """Test scheduler validation."""
-        valid_schedulers = ["linear", "cosine", "constant", "polynomial"]
-        
-        for scheduler in valid_schedulers:
-            config = TrainingConfig(scheduler=scheduler)
-            assert config.scheduler == scheduler
+    def test_tau_seconds_validation(self):
+        """Test tau seconds validation."""
+        # Valid tau values
+        for tau in [3600.0, 86400.0, 604800.0]:  # 1 hour, 1 day, 1 week
+            config = TrainingConfig(tau_seconds=tau)
+            assert config.tau_seconds == tau
     
-    def test_temperature_validation(self):
-        """Test temperature parameter validation."""
-        # Valid temperatures
-        for temp in [0.01, 0.1, 0.5, 1.0, 2.0, 10.0]:
-            config = TrainingConfig(temperature=temp)
-            assert config.temperature == temp
+    def test_dry_run_mode(self):
+        """Test dry run mode."""
+        config = TrainingConfig(dry_run=True)
+        assert config.dry_run is True
+        
+        config = TrainingConfig(dry_run=False)
+        assert config.dry_run is False
     
     def test_gradient_clip_validation(self):
         """Test gradient clipping validation."""
         # Valid values
-        config = TrainingConfig(gradient_clip_norm=None)
-        assert config.gradient_clip_norm is None
+        config = TrainingConfig(gradient_clip=0.0)
+        assert config.gradient_clip == 0.0
         
-        config = TrainingConfig(gradient_clip_norm=1.0)
-        assert config.gradient_clip_norm == 1.0
+        config = TrainingConfig(gradient_clip=1.0)
+        assert config.gradient_clip == 1.0
         
-        config = TrainingConfig(gradient_clip_norm=0.5)
-        assert config.gradient_clip_norm == 0.5
+        config = TrainingConfig(gradient_clip=0.5)
+        assert config.gradient_clip == 0.5
 
 
 class TestConfigSerialization:

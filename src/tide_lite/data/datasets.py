@@ -93,7 +93,8 @@ def load_quora(cfg: Dict) -> Tuple[Dataset, Dataset, Dataset]:
     dataset = load_dataset(
         "quora",
         cache_dir=cache_dir,
-        split="train"
+        split="train",
+        trust_remote_code=True  # Required for Quora dataset
     )
     
     # Filter out None questions

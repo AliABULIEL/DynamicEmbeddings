@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Dict, Any
 
 from ..models.tide_lite import TIDELite, TIDELiteConfig
-from ..train.trainer import TIDETrainer, TrainingConfig  
+from ..train.trainer import TIDELiteTrainer, TrainingConfig  
 from ..utils.config import ConfigLoader, TIDEConfig, initialize_environment
 
 logger = logging.getLogger(__name__)
