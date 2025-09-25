@@ -6,7 +6,7 @@
 set -e  # Exit on error
 
 echo "================================================"
-echo "TIDE-Lite End-to-End Smoke Test"  
+echo "TIDE-Lite End-to-End Smoke Test"
 echo "================================================"
 echo "This will run actual training and evaluation with tiny datasets."
 echo "Purpose: Verify the entire pipeline works correctly."
@@ -32,7 +32,7 @@ mkdir -p "${OUTPUT_DIR}"
 echo "[Stage 1/6] Environment Check"
 echo "--------------------------------"
 
-python -c "
+python3 -c "
 import torch
 import transformers
 import datasets
@@ -49,7 +49,7 @@ print('✅ Environment OK')
 "
 
 # Determine device
-if python -c "import torch; exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null; then
+if python3 -c "import torch; exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null; then
     DEVICE="cuda"
 else
     DEVICE="cpu"
@@ -61,7 +61,7 @@ fi
 echo -e "\n[Stage 2/6] Data Loading Test"
 echo "--------------------------------"
 
-python -c "
+python3 -c "
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path.cwd()))
@@ -96,7 +96,7 @@ print('✅ Data loading test complete')
 echo -e "\n[Stage 3/6] Model Initialization"
 echo "--------------------------------"
 
-python -c "
+python3 -c "
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path.cwd()))
@@ -149,7 +149,7 @@ time_mlp_hidden: 128
 batch_size: ${BATCH_SIZE}
 eval_batch_size: ${BATCH_SIZE}
 epochs: ${NUM_EPOCHS}
-lr: 1e-4
+lr: 0.0001
 warmup_steps: 10
 eval_every: 50
 save_every: 100
@@ -157,7 +157,7 @@ save_every: 100
 # Loss weights
 consistency_weight: 0.1
 preservation_weight: 0.05
-tau_seconds: 86400
+tau_seconds: 86400.0
 
 # Data settings
 max_seq_len: 128
@@ -169,7 +169,7 @@ seed: 42
 device: ${DEVICE}
 use_amp: false
 dry_run: false
-skip_temporal: true
+temporal_enabled: false
 
 # Output
 out_dir: ${OUTPUT_DIR}/model
@@ -177,16 +177,16 @@ checkpoint_dir: ${OUTPUT_DIR}/checkpoints
 EOF
 
 echo "Running training..."
-python -m src.tide_lite.cli.train_cli \
+python3 -m src.tide_lite.cli.train_cli \
     --config "${OUTPUT_DIR}/smoke_config.yaml" \
     --epochs ${NUM_EPOCHS} \
     --batch-size ${BATCH_SIZE} \
     --device ${DEVICE} \
     2>&1 | tee "${OUTPUT_DIR}/training.log" || {
         echo "⚠️  Training with train_cli failed, trying alternative..."
-        
+
         # Fallback to direct trainer if CLI fails
-        python -c "
+        python3 -c "
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path.cwd()))
@@ -256,7 +256,7 @@ fi
 
 # Evaluate on STS-B
 echo "Evaluating on STS-B..."
-python -c "
+python3 -c "
 import sys
 from pathlib import Path
 import json
@@ -303,7 +303,7 @@ for sample in test_data:
         # Encode sentences
         emb1 = model.encode_texts([sample['sentence1']], batch_size=1)
         emb2 = model.encode_texts([sample['sentence2']], batch_size=1)
-        
+
         # Compute cosine similarity
         sim = torch.cosine_similarity(emb1, emb2, dim=1).item()
         predictions.append(sim)
@@ -326,7 +326,7 @@ with open(output_dir / 'results.json', 'w') as f:
 echo -e "\n[Stage 6/6] Results Summary"
 echo "--------------------------------"
 
-python -c "
+python3 -c "
 import os
 import json
 from pathlib import Path
