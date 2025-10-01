@@ -25,7 +25,7 @@ from tqdm import tqdm
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.tide_lite.models import TIDELite, TIDELiteConfig
-from src.tide_lite.train.trainer import TIDETrainer, TrainingConfig
+from depreacted.src.tide_lite.train.trainer import TIDETrainer, TrainingConfig
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -47,18 +47,18 @@ class BenchmarkResult:
 
 class MultiDatasetBenchmark:
     """Run comprehensive benchmarks across multiple datasets and models"""
-    
+
     def __init__(self, output_dir: str = "results/benchmarks"):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.results = []
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        
+
     def get_datasets(self) -> Dict[str, any]:
         """Load multiple evaluation datasets"""
-        
+
         datasets = {}
-        
+
         # 1. STS-B (Semantic Textual Similarity)
         try:
             from datasets import load_dataset
@@ -71,7 +71,7 @@ class MultiDatasetBenchmark:
             }
         except Exception as e:
             logger.warning(f"Could not load STS-B: {e}")
-        
+
         # 2. SICK (Sentences Involving Compositional Knowledge)
         try:
             sick = load_dataset("sick")
@@ -83,7 +83,7 @@ class MultiDatasetBenchmark:
             }
         except Exception as e:
             logger.warning(f"Could not load SICK: {e}")
-        
+
         # 3. Quora Question Pairs
         try:
             quora = load_dataset("quora")
@@ -95,7 +95,7 @@ class MultiDatasetBenchmark:
             }
         except Exception as e:
             logger.warning(f"Could not load Quora: {e}")
-        
+
         # 4. MRPC (Microsoft Research Paraphrase Corpus)
         try:
             mrpc = load_dataset("glue", "mrpc")
@@ -107,7 +107,7 @@ class MultiDatasetBenchmark:
             }
         except Exception as e:
             logger.warning(f"Could not load MRPC: {e}")
-        
+
         # 5. Custom Temporal Dataset (simulated)
         datasets["Temporal-News"] = {
             "data": self.create_temporal_dataset(),
@@ -115,18 +115,18 @@ class MultiDatasetBenchmark:
             "size": 1000,
             "description": "News with temporal drift (custom)"
         }
-        
+
         return datasets
-    
+
     def create_temporal_dataset(self) -> List[Dict]:
         """Create a synthetic temporal dataset to show TIDE-Lite's advantage"""
-        
+
         from datetime import datetime, timedelta
         import random
-        
+
         # Topics that evolve over time
         temporal_pairs = []
-        
+
         # COVID evolution examples
         covid_timeline = [
             ("virus outbreak", "new disease", datetime(2020, 1, 1), 0.9),
@@ -134,15 +134,15 @@ class MultiDatasetBenchmark:
             ("virus outbreak", "vaccine available", datetime(2021, 1, 1), 0.5),
             ("pandemic", "endemic", datetime(2023, 1, 1), 0.6),
         ]
-        
-        # Tech evolution examples  
+
+        # Tech evolution examples
         ai_timeline = [
             ("AI research", "deep learning", datetime(2015, 1, 1), 0.8),
             ("AI research", "GPT models", datetime(2020, 1, 1), 0.7),
             ("AI research", "ChatGPT", datetime(2023, 1, 1), 0.6),
             ("machine learning", "AI regulation", datetime(2024, 1, 1), 0.5),
         ]
-        
+
         # Economic terms
         economy_timeline = [
             ("recession", "financial crisis", datetime(2008, 1, 1), 0.9),
@@ -150,7 +150,7 @@ class MultiDatasetBenchmark:
             ("inflation", "transitory", datetime(2021, 1, 1), 0.7),
             ("inflation", "persistent", datetime(2023, 1, 1), 0.8),
         ]
-        
+
         # Generate pairs with temporal context
         for timeline in [covid_timeline, ai_timeline, economy_timeline]:
             for sent1, sent2, timestamp, sim in timeline:
@@ -161,19 +161,19 @@ class MultiDatasetBenchmark:
                     "similarity": sim,
                     "label": sim * 5.0  # Convert to STS-B scale
                 })
-        
+
         # Add random pairs
         topics = ["technology", "politics", "sports", "science", "business"]
         for _ in range(900):
             t1, t2 = random.sample(topics, 2)
             days_apart = random.randint(0, 1000)
             timestamp = (datetime(2020, 1, 1) + timedelta(days=days_apart)).timestamp()
-            
+
             # Similarity decreases with time distance
             time_factor = np.exp(-days_apart / 365)
             base_sim = random.uniform(0.3, 1.0)
             adjusted_sim = base_sim * (0.5 + 0.5 * time_factor)
-            
+
             temporal_pairs.append({
                 "sentence1": f"News about {t1}",
                 "sentence2": f"Article on {t2}",
@@ -181,12 +181,12 @@ class MultiDatasetBenchmark:
                 "similarity": adjusted_sim,
                 "label": adjusted_sim * 5.0
             })
-        
+
         return temporal_pairs
-    
+
     def get_baseline_models(self) -> List[Dict]:
         """Define baseline models to compare against"""
-        
+
         baselines = [
             {
                 "name": "Frozen-MiniLM",
@@ -242,22 +242,22 @@ class MultiDatasetBenchmark:
                 "description": "Fully fine-tuned baseline"
             }
         ]
-        
+
         return baselines
-    
+
     def evaluate_model_on_dataset(
-        self, 
-        model_config: Dict, 
+        self,
+        model_config: Dict,
         dataset: Dict,
         max_samples: int = 1000
     ) -> BenchmarkResult:
         """Evaluate a single model on a single dataset"""
-        
+
         print(f"  Evaluating {model_config['name']} on {dataset.get('description', 'dataset')}...")
-        
+
         # Simulate results (replace with actual training/evaluation)
         # In production, you would actually train and evaluate here
-        
+
         # Expected results based on model type and dataset
         if "Frozen" in model_config["name"]:
             base_score = 0.82
@@ -271,7 +271,7 @@ class MultiDatasetBenchmark:
             base_score = 0.89
         else:
             base_score = 0.80
-        
+
         # Adjust based on dataset
         dataset_adjustments = {
             "STS-B": 0.0,
@@ -280,12 +280,12 @@ class MultiDatasetBenchmark:
             "MRPC": -0.03,
             "Temporal-News": 0.03 if "TIDE" in model_config["name"] else -0.05
         }
-        
+
         dataset_name = list(dataset_adjustments.keys())[0]  # Get first matching
         adjustment = dataset_adjustments.get(dataset_name, 0.0)
-        
+
         spearman = base_score + adjustment + np.random.normal(0, 0.01)
-        
+
         return BenchmarkResult(
             model_name=model_config["name"],
             dataset_name=dataset_name,
@@ -297,45 +297,45 @@ class MultiDatasetBenchmark:
             inference_time=0.001 * (1 + model_config["parameters"] / 1000000),
             memory_usage=1.0 + model_config["parameters"] / 10000000
         )
-    
+
     def run_comprehensive_benchmark(self):
         """Run all models on all datasets"""
-        
+
         print("\n" + "="*70)
         print("COMPREHENSIVE MULTI-DATASET BENCHMARK")
         print("="*70)
-        
+
         datasets = self.get_datasets()
         models = self.get_baseline_models()
-        
+
         print(f"\n📊 Testing {len(models)} models on {len(datasets)} datasets")
         print(f"   Total experiments: {len(models) * len(datasets)}")
-        
+
         # Run benchmarks
         for dataset_name, dataset_info in datasets.items():
             print(f"\n🔍 Dataset: {dataset_name}")
             print(f"   Description: {dataset_info['description']}")
             print(f"   Size: {dataset_info['size']} samples")
-            
+
             for model_config in models:
                 result = self.evaluate_model_on_dataset(model_config, dataset_info)
                 self.results.append(result)
                 print(f"   ✓ {model_config['name']}: Spearman={result.spearman:.4f}")
-        
+
         # Save results
         self.save_results()
-        
+
         # Generate visualizations
         self.create_visualizations()
-        
+
         # Generate report
         self.generate_report()
-        
+
         return self.results
-    
+
     def save_results(self):
         """Save benchmark results to JSON"""
-        
+
         results_dict = []
         for r in self.results:
             results_dict.append({
@@ -349,15 +349,15 @@ class MultiDatasetBenchmark:
                 "inference_time": r.inference_time,
                 "memory_usage": r.memory_usage
             })
-        
+
         with open(self.output_dir / "benchmark_results.json", "w") as f:
             json.dump(results_dict, f, indent=2)
-        
+
         print(f"\n💾 Results saved to {self.output_dir}/benchmark_results.json")
-    
+
     def create_visualizations(self):
         """Create comprehensive visualization plots"""
-        
+
         # Convert results to DataFrame
         df = pd.DataFrame([
             {
@@ -369,10 +369,10 @@ class MultiDatasetBenchmark:
             }
             for r in self.results
         ])
-        
+
         # Create figure with subplots
         fig = plt.figure(figsize=(18, 12))
-        
+
         # 1. Performance across datasets (grouped bar chart)
         ax1 = plt.subplot(2, 3, 1)
         pivot_df = df.pivot(index='Dataset', columns='Model', values='Spearman')
@@ -382,27 +382,27 @@ class MultiDatasetBenchmark:
         ax1.set_xlabel('Dataset')
         ax1.legend(loc='center left', bbox_to_anchor=(1, 0.5))
         ax1.grid(True, alpha=0.3)
-        
+
         # 2. Parameter efficiency scatter plot
         ax2 = plt.subplot(2, 3, 2)
         for model in df['Model'].unique():
             model_df = df[df['Model'] == model]
             avg_spearman = model_df['Spearman'].mean()
             params = model_df['Parameters'].iloc[0]
-            
+
             color = 'green' if 'TIDE' in model else 'gray'
             marker = 'o' if 'TIDE' in model else 's'
-            
-            ax2.scatter(params/1000, avg_spearman, s=100, 
+
+            ax2.scatter(params/1000, avg_spearman, s=100,
                        label=model, color=color, marker=marker, alpha=0.7)
-        
+
         ax2.set_xscale('log')
         ax2.set_xlabel('Parameters (K)')
         ax2.set_ylabel('Average Spearman')
         ax2.set_title('Parameter Efficiency', fontsize=12, fontweight='bold')
         ax2.legend()
         ax2.grid(True, alpha=0.3)
-        
+
         # 3. Temporal dataset advantage
         ax3 = plt.subplot(2, 3, 3)
         temporal_df = df[df['Dataset'] == 'Temporal-News']
@@ -412,42 +412,42 @@ class MultiDatasetBenchmark:
         ax3.set_ylabel('Spearman Correlation')
         ax3.set_xticklabels(temporal_df['Model'], rotation=45, ha='right')
         ax3.grid(True, alpha=0.3)
-        
+
         # 4. Heatmap of all results
         ax4 = plt.subplot(2, 3, 4)
         pivot_for_heatmap = df.pivot(index='Model', columns='Dataset', values='Spearman')
         sns.heatmap(pivot_for_heatmap, annot=True, fmt='.3f', cmap='RdYlGn', ax=ax4, vmin=0.7, vmax=0.9)
         ax4.set_title('Performance Heatmap', fontsize=12, fontweight='bold')
-        
+
         # 5. Training efficiency
         ax5 = plt.subplot(2, 3, 5)
         model_avg = df.groupby('Model').agg({
             'Spearman': 'mean',
             'Training Time': 'first'
         }).reset_index()
-        
+
         ax5.scatter(model_avg['Training Time'], model_avg['Spearman'], s=100)
         for i, model in enumerate(model_avg['Model']):
-            ax5.annotate(model, (model_avg['Training Time'].iloc[i], 
+            ax5.annotate(model, (model_avg['Training Time'].iloc[i],
                                 model_avg['Spearman'].iloc[i]),
                         fontsize=8, ha='right')
-        
+
         ax5.set_xlabel('Training Time (minutes)')
         ax5.set_ylabel('Average Spearman')
         ax5.set_title('Training Efficiency', fontsize=12, fontweight='bold')
         ax5.grid(True, alpha=0.3)
-        
+
         # 6. Relative improvement over baseline
         ax6 = plt.subplot(2, 3, 6)
         baseline_scores = df[df['Model'] == 'Frozen-MiniLM'].set_index('Dataset')['Spearman']
         improvements = []
-        
+
         for model in df['Model'].unique():
             if model != 'Frozen-MiniLM':
                 model_df = df[df['Model'] == model].set_index('Dataset')
                 avg_improvement = ((model_df['Spearman'] - baseline_scores) / baseline_scores * 100).mean()
                 improvements.append({'Model': model, 'Improvement': avg_improvement})
-        
+
         imp_df = pd.DataFrame(improvements)
         colors = ['green' if 'TIDE' in m else 'gray' for m in imp_df['Model']]
         ax6.bar(imp_df['Model'], imp_df['Improvement'], color=colors)
@@ -456,16 +456,16 @@ class MultiDatasetBenchmark:
         ax6.set_xticklabels(imp_df['Model'], rotation=45, ha='right')
         ax6.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
         ax6.grid(True, alpha=0.3)
-        
+
         plt.tight_layout()
         plt.savefig(self.output_dir / 'benchmark_comparison.png', dpi=150, bbox_inches='tight')
         plt.show()
-        
+
         print(f"📊 Visualizations saved to {self.output_dir}/benchmark_comparison.png")
-    
+
     def generate_report(self):
         """Generate comprehensive markdown report"""
-        
+
         df = pd.DataFrame([
             {
                 "Model": r.model_name,
@@ -479,29 +479,29 @@ class MultiDatasetBenchmark:
             }
             for r in self.results
         ])
-        
+
         # Calculate summary statistics
         model_summary = df.groupby('Model').agg({
             'Spearman': ['mean', 'std'],
             'Parameters': 'first',
             'Training Time': 'first'
         }).round(4)
-        
+
         dataset_summary = df.groupby('Dataset').agg({
             'Spearman': ['mean', 'max', 'min']
         }).round(4)
-        
+
         # Find best model per dataset
         best_per_dataset = df.loc[df.groupby('Dataset')['Spearman'].idxmax()]
-        
+
         # Calculate TIDE-Lite advantages
         tide_large = df[df['Model'] == 'TIDE-Lite-Large']
         frozen = df[df['Model'] == 'Frozen-MiniLM']
         finetuned = df[df['Model'] == 'Fine-tuned-MiniLM']
-        
+
         tide_vs_frozen = tide_large['Spearman'].mean() - frozen['Spearman'].mean()
         tide_vs_finetuned = finetuned['Spearman'].mean() - tide_large['Spearman'].mean()
-        
+
         report = f"""# Multi-Dataset Benchmark Report
 
 ## Executive Summary
@@ -588,7 +588,7 @@ exceptional parameter efficiency.
 
 ### For Different Use Cases
 - **News/Social Media**: TIDE-Lite-Large with daily tau
-- **Scientific Literature**: TIDE-Lite-Base with monthly tau  
+- **Scientific Literature**: TIDE-Lite-Base with monthly tau
 - **General Similarity**: TIDE-Lite-Base with standard config
 - **Real-time Systems**: TIDE-Lite-Small for <1ms latency
 
@@ -601,14 +601,14 @@ All TIDE-Lite variants show statistically significant improvements over baseline
 
 *Report generated: {time.strftime('%Y-%m-%d %H:%M:%S')}*
 """
-        
+
         # Save report
         report_path = self.output_dir / "benchmark_report.md"
         with open(report_path, "w") as f:
             f.write(report)
-        
+
         print(f"\n📝 Report saved to {report_path}")
-        
+
         # Also print summary to console
         print("\n" + "="*70)
         print("BENCHMARK SUMMARY")
@@ -625,5 +625,5 @@ All TIDE-Lite variants show statistically significant improvements over baseline
 if __name__ == "__main__":
     benchmark = MultiDatasetBenchmark()
     results = benchmark.run_comprehensive_benchmark()
-    
+
     print("\n✅ Benchmark complete! Check results/ for full analysis")

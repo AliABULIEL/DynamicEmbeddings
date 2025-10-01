@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 def sample_config():
     """Provide a sample TIDELiteConfig for tests."""
     from src.tide_lite.models.tide_lite import TIDELiteConfig
-    
+
     return TIDELiteConfig(
         encoder_name="sentence-transformers/all-MiniLM-L6-v2",
         hidden_dim=384,
@@ -31,8 +31,8 @@ def sample_config():
 @pytest.fixture
 def sample_training_config():
     """Provide a sample TrainingConfig for tests."""
-    from src.tide_lite.train.trainer import TrainingConfig
-    
+    from depreacted.src.tide_lite.train.trainer import TrainingConfig
+
     return TrainingConfig(
         batch_size=32,
         learning_rate=1e-4,
@@ -49,22 +49,22 @@ def mock_encoder():
     """Provide a mock transformer encoder."""
     encoder = MagicMock()
     encoder.config.hidden_size = 384
-    
+
     # Mock the forward pass
     def forward_mock(input_ids=None, attention_mask=None, **kwargs):
         batch_size = input_ids.shape[0] if input_ids is not None else 1
         seq_len = input_ids.shape[1] if input_ids is not None else 128
-        
+
         output = MagicMock()
         output.last_hidden_state = torch.randn(batch_size, seq_len, 384)
         return output
-    
+
     encoder.forward = forward_mock
     encoder.__call__ = forward_mock
-    
+
     # Add parameters for testing
     encoder.parameters = lambda: [torch.nn.Parameter(torch.randn(10, 10))]
-    
+
     return encoder
 
 
@@ -73,7 +73,7 @@ def sample_batch():
     """Provide a sample batch of data for testing."""
     batch_size = 4
     seq_len = 128
-    
+
     return {
         "input_ids": torch.randint(0, 1000, (batch_size, seq_len)),
         "attention_mask": torch.ones(batch_size, seq_len),
@@ -92,7 +92,7 @@ def temp_dir(tmp_path):
 def create_train_parser():
     """Mock train parser for testing."""
     import argparse
-    
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str)
     parser.add_argument("--data-dir", type=str, required=True)
@@ -109,7 +109,7 @@ def create_train_parser():
 def create_eval_stsb_parser():
     """Mock STS-B eval parser for testing."""
     import argparse
-    
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", type=str, required=True)
     parser.add_argument("--data-dir", type=str, required=True)
@@ -120,7 +120,7 @@ def create_eval_stsb_parser():
 def create_eval_quora_parser():
     """Mock Quora eval parser for testing."""
     import argparse
-    
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", type=str, required=True)
     parser.add_argument("--data-dir", type=str, required=True)
@@ -131,7 +131,7 @@ def create_eval_quora_parser():
 def create_eval_temporal_parser():
     """Mock temporal eval parser for testing."""
     import argparse
-    
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", type=str, required=True)
     parser.add_argument("--data-dir", type=str, required=True)
@@ -142,7 +142,7 @@ def create_eval_temporal_parser():
 def create_aggregate_parser():
     """Mock aggregate parser for testing."""
     import argparse
-    
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--results-dir", type=str, required=True)
     parser.add_argument("--output", type=str, required=True)
@@ -153,7 +153,7 @@ def create_aggregate_parser():
 def create_plots_parser():
     """Mock plots parser for testing."""
     import argparse
-    
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--results", type=str, required=True)
     parser.add_argument("--output-dir", type=str, required=True)
@@ -164,7 +164,7 @@ def create_plots_parser():
 def create_report_parser():
     """Mock report parser for testing."""
     import argparse
-    
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--experiment-dir", type=str, required=True)
     parser.add_argument("--output", type=str, required=True)
