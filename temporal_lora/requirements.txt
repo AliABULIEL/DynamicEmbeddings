@@ -1,0 +1,45 @@
+# Core dependencies
+torch==2.1.0
+transformers==4.35.2
+sentence-transformers==2.2.2
+peft==0.7.1
+datasets==2.15.0
+
+# Retrieval and indexing
+faiss-cpu==1.7.4
+# For GPU: faiss-gpu==1.7.4
+
+# Data processing
+pandas==2.1.3
+numpy==1.24.3
+scikit-learn==1.3.2
+
+# Visualization
+matplotlib==3.8.2
+seaborn==0.13.0
+umap-learn==0.5.5
+
+# Configuration
+pyyaml==6.0.1
+omegaconf==2.3.0
+
+# CLI
+typer==0.9.0
+rich==13.7.0
+
+# Utilities
+tqdm==4.66.1
+loguru==0.7.2
+
+# Development tools
+pytest==7.4.3
+pytest-cov==4.1.0
+black==23.12.0
+ruff==0.1.8
+pre-commit==3.5.0
+
+# Reproducibility
+scipy==1.11.4
+
+# Note: For Google Colab, some packages may already be installed.
+# Check compatibility with: pip list

@@ -1,0 +1,54 @@
+# Data Configuration for Temporal LoRA
+
+# Dataset source
+dataset:
+  # Hugging Face dataset identifier
+  hf_name: "arxiv-metadata"
+  # Filter categories (cs.* = Computer Science, stat.ML = Machine Learning)
+  categories: ["cs.", "stat.ML"]
+  # Fields to extract
+  fields: ["title", "abstract", "update_date"]
+
+# Time bucketing strategy
+buckets:
+  # MVP: 2 buckets (≤2018, 2019-2024)
+  # Can configure to 3 buckets: [≤2015, 2016-2020, 2021-2024]
+  definitions:
+    - name: "pre_2019"
+      start: null  # No lower bound
+      end: 2018    # Inclusive
+    - name: "2019_2024"
+      start: 2019  # Inclusive
+      end: 2024    # Inclusive
+
+# Sampling strategy
+sampling:
+  # Maximum papers per bucket (for balanced training)
+  max_per_bucket: 6000
+  # Random seed for reproducibility
+  seed: 42
+  # Stratified sampling by year within buckets
+  stratified: true
+
+# Preprocessing
+preprocessing:
+  # Minimum abstract length (characters)
+  min_abstract_length: 100
+  # Maximum abstract length (for truncation)
+  max_abstract_length: 512
+  # Remove papers with missing fields
+  drop_missing: true
+
+# Train/val/test splits
+splits:
+  train: 0.7
+  val: 0.15
+  test: 0.15
+  # Seed for split reproducibility
+  seed: 42
+
+# Output paths (relative to project root)
+output:
+  processed_dir: "data/processed"
+  raw_dir: "data/raw"
+  csv_fallback: "data/arxiv_cs_ml.csv"
