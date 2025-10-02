@@ -7,6 +7,9 @@ import typer
 
 from .data.pipeline import run_data_pipeline
 from .train.trainer import train_all_buckets
+from .eval.encoder import encode_and_cache_bucket
+from .eval.indexes import build_bucket_indexes
+from .eval.evaluate import run_evaluation
 from .utils.env import dump_environment
 from .utils.io import load_config
 from .utils.paths import (
@@ -14,6 +17,7 @@ from .utils.paths import (
     CONFIG_DIR,
     DATA_PROCESSED_DIR,
     DELIVERABLES_REPRO_DIR,
+    DELIVERABLES_RESULTS_DIR,
     PROJECT_ROOT,
     ensure_dirs,
 )
@@ -61,7 +65,11 @@ def prepare_data(
 def train_adapters(
     epochs: int = typer.Option(2, help="Training epochs"),
     lora_r: int = typer.Option(16, help="LoRA rank"),
-    cross_period_negatives: bool = typer.Option(True, help="Use cross-period negatives"),
+    cross_period_negatives: bool = typer.Option(
+        True,
+        "--cross-period-negatives/--no-cross-period-negatives",
+        help="Use cross-period negatives",
+    ),
     data_dir: Optional[str] = typer.Option(None, help="Override data directory"),
     output_dir: Optional[str] = typer.Option(None, help="Override output directory"),
 ) -> None:
@@ -77,8 +85,8 @@ def train_adapters(
         model_config["lora"]["r"] = lora_r
     if epochs:
         train_config["training"]["epochs"] = epochs
-    if cross_period_negatives is not None:
-        train_config["negatives"]["cross_period_negatives"] = cross_period_negatives
+    
+    train_config["negatives"]["cross_period_negatives"] = cross_period_negatives
     
     # Combine configs
     config = {
@@ -123,23 +131,125 @@ def train_adapters(
 
 @app.command()
 def build_indexes(
-    checkpoint_dir: Optional[str] = typer.Option(None, help="Path to adapter checkpoints"),
+    use_lora: bool = typer.Option(True, "--lora/--baseline", help="Use LoRA adapters or baseline"),
+    adapters_dir: Optional[str] = typer.Option(None, help="Path to adapter checkpoints"),
+    data_dir: Optional[str] = typer.Option(None, help="Data directory"),
+    output_dir: Optional[str] = typer.Option(None, help="Output directory for indexes"),
 ) -> None:
     """Build FAISS IndexFlatIP for each time bucket."""
-    raise NotImplementedError("build-indexes not yet implemented")
+    ensure_dirs()
+    
+    # Load configs
+    data_config = load_config("data", CONFIG_DIR)
+    model_config = load_config("model", CONFIG_DIR)
+    
+    # Set paths
+    data_path = Path(data_dir) if data_dir else DATA_PROCESSED_DIR
+    adapters_path = Path(adapters_dir) if adapters_dir else ADAPTERS_DIR
+    
+    embeddings_suffix = "lora" if use_lora else "baseline"
+    embeddings_dir = PROJECT_ROOT / "models" / f"embeddings_{embeddings_suffix}"
+    indexes_dir = PROJECT_ROOT / "models" / f"indexes_{embeddings_suffix}"
+    
+    if output_dir:
+        indexes_dir = Path(output_dir)
+    
+    base_model = model_config["base_model"]["name"]
+    buckets = [b["name"] for b in data_config["buckets"]]
+    
+    typer.echo(f"Building {'LoRA' if use_lora else 'baseline'} indexes")
+    typer.echo(f"Base model: {base_model}")
+    typer.echo(f"Buckets: {', '.join(buckets)}")
+    
+    # Encode and cache embeddings for each bucket
+    for bucket_name in buckets:
+        bucket_data_path = data_path / bucket_name
+        adapter_dir = adapters_path / bucket_name if use_lora else None
+        
+        typer.echo(f"\n{'='*60}")
+        typer.echo(f"Processing bucket: {bucket_name}")
+        typer.echo(f"{'='*60}")
+        
+        encode_and_cache_bucket(
+            bucket_name=bucket_name,
+            bucket_data_path=bucket_data_path,
+            adapter_dir=adapter_dir,
+            base_model_name=base_model,
+            output_dir=embeddings_dir,
+            use_lora=use_lora,
+        )
+    
+    # Build FAISS indexes
+    typer.echo(f"\n{'='*60}")
+    typer.echo("Building FAISS indexes...")
+    typer.echo(f"{'='*60}")
+    
+    index_paths = build_bucket_indexes(embeddings_dir, indexes_dir, buckets)
+    
+    typer.echo(f"\n✓ Indexes built: {len(index_paths)} buckets")
+    typer.echo(f"Output directory: {indexes_dir}")
 
 
 @app.command()
 def evaluate(
     mode: str = typer.Option("multi-index", help="Retrieval mode: time-select or multi-index"),
     merge: str = typer.Option("softmax", help="Multi-index merge: softmax/mean/max/rrf"),
+    temperature: float = typer.Option(2.0, help="Temperature for softmax merge"),
     scenarios: Optional[str] = typer.Option(
         "within,cross,all", help="Comma-separated eval scenarios: within/cross/all"
     ),
-    config: Optional[str] = typer.Option(None, help="Override eval config path"),
+    use_lora: bool = typer.Option(True, "--lora/--baseline", help="Evaluate LoRA or baseline"),
+    data_dir: Optional[str] = typer.Option(None, help="Data directory"),
+    output_dir: Optional[str] = typer.Option(None, help="Output directory for results"),
 ) -> None:
     """Evaluate retrieval quality with NDCG@10, Recall@10/100, MRR."""
-    raise NotImplementedError("evaluate not yet implemented")
+    ensure_dirs()
+    
+    # Load configs
+    data_config = load_config("data", CONFIG_DIR)
+    
+    # Set paths
+    data_path = Path(data_dir) if data_dir else DATA_PROCESSED_DIR
+    
+    embeddings_suffix = "lora" if use_lora else "baseline"
+    embeddings_dir = PROJECT_ROOT / "models" / f"embeddings_{embeddings_suffix}"
+    indexes_dir = PROJECT_ROOT / "models" / f"indexes_{embeddings_suffix}"
+    
+    output_path = Path(output_dir) if output_dir else DELIVERABLES_RESULTS_DIR
+    
+    # Parse scenarios
+    scenario_list = [s.strip() for s in scenarios.split(",")]
+    buckets = [b["name"] for b in data_config["buckets"]]
+    
+    typer.echo(f"Evaluating {'LoRA' if use_lora else 'baseline'} system")
+    typer.echo(f"Mode: {mode}")
+    typer.echo(f"Scenarios: {', '.join(scenario_list)}")
+    if mode == "multi-index":
+        typer.echo(f"Merge: {merge} (temperature={temperature})")
+    
+    # Run evaluation
+    results = run_evaluation(
+        data_dir=data_path,
+        embeddings_dir=embeddings_dir,
+        indexes_dir=indexes_dir,
+        buckets=buckets,
+        scenarios=scenario_list,
+        mode=mode,
+        merge_strategy=merge,
+        temperature=temperature,
+        output_dir=output_path,
+    )
+    
+    # Print summary
+    typer.echo(f"\n{'='*60}")
+    typer.echo("EVALUATION RESULTS")
+    typer.echo(f"{'='*60}")
+    for key, metrics in results.items():
+        typer.echo(f"\n{key}:")
+        for metric_name, value in metrics.items():
+            typer.echo(f"  {metric_name}: {value:.4f}")
+    
+    typer.echo(f"\n✓ Results saved to: {output_path}")
 
 
 @app.command()
