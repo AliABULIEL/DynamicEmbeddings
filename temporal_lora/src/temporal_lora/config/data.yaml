@@ -2,48 +2,40 @@
 
 # Dataset source
 dataset:
-  # Hugging Face dataset identifier
-  hf_name: "arxiv-metadata"
-  # Filter categories (cs.* = Computer Science, stat.ML = Machine Learning)
-  categories: ["cs.", "stat.ML"]
+  # Hugging Face dataset identifier (placeholder - will be updated with actual dataset)
+  hf_name: "ccdv/arxiv-classification"
   # Fields to extract
-  fields: ["title", "abstract", "update_date"]
+  fields: ["paper_id", "title", "abstract", "year"]
 
 # Time bucketing strategy
 buckets:
   # MVP: 2 buckets (≤2018, 2019-2024)
-  # Can configure to 3 buckets: [≤2015, 2016-2020, 2021-2024]
+  # Can configure to 3 buckets by adding more definitions
   definitions:
-    - name: "pre_2019"
-      start: null  # No lower bound
-      end: 2018    # Inclusive
-    - name: "2019_2024"
-      start: 2019  # Inclusive
-      end: 2024    # Inclusive
+    - name: "≤2018"
+      end: 2018    # Inclusive upper bound
+    - name: "2019-2024"
+      end: 2024    # Inclusive upper bound
 
 # Sampling strategy
 sampling:
-  # Maximum papers per bucket (for balanced training)
+  # Maximum papers per bucket (for balanced training and fast iteration)
   max_per_bucket: 6000
   # Random seed for reproducibility
   seed: 42
-  # Stratified sampling by year within buckets
-  stratified: true
 
 # Preprocessing
 preprocessing:
   # Minimum abstract length (characters)
   min_abstract_length: 100
-  # Maximum abstract length (for truncation)
-  max_abstract_length: 512
-  # Remove papers with missing fields
+  # Drop papers with missing fields
   drop_missing: true
 
-# Train/val/test splits
+# Train/val/test splits (per bucket)
 splits:
   train: 0.7
-  val: 0.15
-  test: 0.15
+  val: 0.1
+  test: 0.2
   # Seed for split reproducibility
   seed: 42
 
