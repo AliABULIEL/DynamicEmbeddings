@@ -47,11 +47,11 @@ def build_indexes(
 
 @app.command()
 def evaluate(
-    scenarios: List[str] = typer.Option(
-        ["within", "cross", "all"], help="Eval scenarios: within/cross/all"
-    ),
     mode: str = typer.Option("multi-index", help="Retrieval mode: time-select or multi-index"),
     merge: str = typer.Option("softmax", help="Multi-index merge: softmax/mean/max/rrf"),
+    scenarios: Optional[str] = typer.Option(
+        "within,cross,all", help="Comma-separated eval scenarios: within/cross/all"
+    ),
     config: Optional[str] = typer.Option(None, help="Override eval config path"),
 ) -> None:
     """Evaluate retrieval quality with NDCG@10, Recall@10/100, MRR."""
