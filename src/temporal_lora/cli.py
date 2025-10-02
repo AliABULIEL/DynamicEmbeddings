@@ -90,18 +90,34 @@ def prepare_data(
 
 @app.command()
 def train_adapters(
+    mode: str = typer.Option(
+        "lora",
+        help="Training mode: lora (default), full_ft, or seq_ft"
+    ),
     epochs: int = typer.Option(2, help="Training epochs"),
-    lora_r: int = typer.Option(16, help="LoRA rank"),
+    lora_r: int = typer.Option(16, help="LoRA rank (for lora mode)"),
+    hard_temporal_negatives: bool = typer.Option(
+        False,
+        "--hard-temporal-negatives/--no-hard-temporal-negatives",
+        help="Use hard temporal negatives from adjacent bins",
+    ),
+    neg_k: int = typer.Option(4, help="Number of hard negatives per positive"),
     cross_period_negatives: bool = typer.Option(
         True,
         "--cross-period-negatives/--no-cross-period-negatives",
-        help="Use cross-period negatives",
+        help="Use cross-period negatives (deprecated, use --hard-temporal-negatives)",
     ),
     data_dir: Optional[str] = typer.Option(None, help="Override data directory"),
     output_dir: Optional[str] = typer.Option(None, help="Override output directory"),
 ) -> None:
-    """Train time-bucket LoRA adapters on frozen sentence encoder."""
+    """Train time-bucket models (LoRA adapters or full fine-tuning)."""
     ensure_dirs()
+    
+    # Validate mode
+    valid_modes = ["lora", "full_ft", "seq_ft"]
+    if mode not in valid_modes:
+        typer.echo(f"❌ Invalid mode: {mode}. Must be one of: {', '.join(valid_modes)}")
+        raise typer.Exit(1)
     
     # Load configs
     model_config = load_config("model", CONFIG_DIR)
@@ -124,7 +140,17 @@ def train_adapters(
     
     # Set paths
     data_path = Path(data_dir) if data_dir else DATA_PROCESSED_DIR
-    output_path = Path(output_dir) if output_dir else ADAPTERS_DIR
+    
+    if output_dir:
+        output_path = Path(output_dir)
+    else:
+        # Default output based on mode
+        if mode == "lora":
+            output_path = ADAPTERS_DIR
+        elif mode == "full_ft":
+            output_path = PROJECT_ROOT / "artifacts" / "full_ft"
+        elif mode == "seq_ft":
+            output_path = PROJECT_ROOT / "artifacts" / "seq_ft"
     
     # Check data exists
     if not data_path.exists():
@@ -135,11 +161,26 @@ def train_adapters(
         raise typer.Exit(1)
     
     # Train
-    typer.echo(f"Training LoRA adapters with r={lora_r}, epochs={epochs}")
-    typer.echo(f"Data directory: {data_path}")
-    typer.echo(f"Output directory: {output_path}")
+    typer.echo(f"Training {mode.upper()} with:")
+    typer.echo(f"  Mode: {mode}")
+    if mode == "lora":
+        typer.echo(f"  LoRA rank: {lora_r}")
+    typer.echo(f"  Epochs: {epochs}")
+    typer.echo(f"  Hard temporal negatives: {hard_temporal_negatives}")
+    if hard_temporal_negatives:
+        typer.echo(f"  Negatives per positive: {neg_k}")
+    typer.echo(f"  Data directory: {data_path}")
+    typer.echo(f"  Output directory: {output_path}")
+    typer.echo()
     
-    metrics = train_all_buckets(data_path, output_path, config)
+    metrics = train_all_buckets(
+        data_path,
+        output_path,
+        config,
+        mode=mode,
+        use_hard_negatives=hard_temporal_negatives,
+        neg_k=neg_k,
+    )
     
     # Print summary
     typer.echo("\n" + "=" * 60)
@@ -147,6 +188,7 @@ def train_adapters(
     typer.echo("=" * 60)
     for bucket_name, bucket_metrics in metrics.items():
         typer.echo(f"\nBucket: {bucket_name}")
+        typer.echo(f"  Mode: {bucket_metrics['mode']}")
         typer.echo(f"  Examples: {bucket_metrics['train_examples']}")
         typer.echo(f"  Epochs: {bucket_metrics['epochs']}")
         typer.echo(f"  Time: {bucket_metrics['total_time']:.2f}s")

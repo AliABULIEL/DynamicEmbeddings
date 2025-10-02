@@ -1,16 +1,12 @@
-"""Training components for LoRA adapters."""
+"""Training modules for LoRA and full fine-tuning."""
 
-from .data_loader import (
-    load_training_pairs,
-    load_bucket_data,
-    create_cross_period_negatives,
-)
-from .trainer import LoRATrainer, train_all_buckets
+from .trainer import UnifiedTrainer, train_all_buckets, log_model_info
+from .hard_negatives import HardNegativeSampler, add_hard_temporal_negatives
 
 __all__ = [
-    "load_training_pairs",
-    "load_bucket_data",
-    "create_cross_period_negatives",
-    "LoRATrainer",
+    "UnifiedTrainer",
     "train_all_buckets",
+    "log_model_info",
+    "HardNegativeSampler",
+    "add_hard_temporal_negatives",
 ]
