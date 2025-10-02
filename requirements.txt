@@ -1,0 +1,48 @@
+# Core ML/NLP
+torch==2.1.2  # Colab: 2.1.0+cu121 pre-installed
+transformers==4.36.2
+sentence-transformers==2.3.1
+peft==0.7.1  # LoRA adapters
+datasets==2.16.1
+
+# Retrieval
+faiss-cpu==1.7.4  # Use faiss-gpu==1.7.4 if CUDA available on local
+
+# Data processing
+numpy==1.24.4  # Colab: 1.23.5 pre-installed
+pandas==2.1.4
+pyarrow==14.0.2  # Fast parquet I/O
+scikit-learn==1.3.2
+
+# Visualization
+matplotlib==3.8.2
+seaborn==0.13.1
+plotly==5.18.0
+umap-learn==0.5.5
+
+# Evaluation
+scipy==1.11.4  # Bootstrap/permutation tests
+tqdm==4.66.1
+
+# CLI & Config
+typer==0.9.0
+rich==13.7.0  # Pretty CLI output
+pyyaml==6.0.1
+omegaconf==2.3.0
+
+# Code quality
+ruff==0.1.11
+black==23.12.1
+pre-commit==3.6.0
+
+# Testing
+pytest==7.4.4
+pytest-cov==4.1.0
+pytest-xdist==3.5.0  # Parallel test execution
+
+# Utilities
+python-dotenv==1.0.0
+loguru==0.7.2
+
+# Optional: Colab integration
+# google-colab  # Uncomment when running in Colab
