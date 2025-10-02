@@ -26,6 +26,61 @@ python -m temporal_lora.cli visualize
 python -m temporal_lora.cli export-deliverables
 ```
 
+## Results
+
+### Quick Interpretation Guide
+
+After running the full pipeline, check the deliverables for key insights:
+
+1. **Off-Diagonal Gains (Cross-Period Performance)**
+   - The Δ heatmaps show where LoRA improves most over baseline
+   - Look for **green cells in cross-period scenarios** (e.g., 2019-2024 queries retrieving ≤2018 docs)
+   - Positive deltas indicate LoRA's temporal adaptation reduces the semantic gap between periods
+   - Rule of thumb: Δ NDCG@10 > +0.02 suggests meaningful improvement
+
+2. **Year-Gap vs Performance Curves** (if generated)
+   - Plots NDCG@10 decline as query-document year gap increases
+   - LoRA should show **flatter curves** = more robust to temporal drift
+   - Baseline typically shows steeper degradation beyond 3-4 year gaps
+
+3. **Memory & Runtime Considerations**
+   - **Training**: ~5-10 min per bucket on T4 (2 epochs, 6k samples, r=16)
+   - **Inference**: Minimal overhead (~2-5% vs baseline) due to LoRA's low-rank structure
+   - **Storage**: LoRA adapters are ~2-5MB each vs ~80MB for full fine-tuned models
+   - **Scalability**: Multi-index retrieval adds latency (~1.5-2x single-index) but enables cross-period queries
+
+### Generated Artifacts
+
+After running `python -m temporal_lora.cli export-deliverables`, find:
+
+- **Results**:
+  - `deliverables/results/baseline_results.csv` - Baseline metrics per scenario
+  - `deliverables/results/lora_results.csv` - LoRA metrics per scenario
+  - `deliverables/results/quick_ablation.csv` - Ablation study results
+  - `deliverables/results/quick_ablation.md` - Ablation summary
+
+- **Visualizations**:
+  - `deliverables/figures/comparison_heatmaps_ndcg@10.png` - Baseline | LoRA | Δ for NDCG@10
+  - `deliverables/figures/comparison_heatmaps_recall@10.png` - Recall@10 comparison
+  - `deliverables/figures/comparison_heatmaps_recall@100.png` - Recall@100 comparison
+  - `deliverables/figures/comparison_heatmaps_mrr.png` - MRR comparison
+  - `deliverables/figures/umap_embeddings.png` - UMAP projection by time bucket
+
+- **Reproducibility**:
+  - `deliverables/repro/environment.json` - System info, CUDA, packages, git SHA
+  - `deliverables/repro/requirements_frozen.txt` - Exact package versions
+  - `deliverables/README_results.md` - Top-line numbers and methodology
+
+### Running Ablations
+
+To test hyperparameter sensitivity:
+
+```bash
+python -m temporal_lora.ablate.quick --lora-ranks 8 16 --merge-strategies softmax mean --max-queries 100
+```
+
+This runs a quick ablation over LoRA rank and merge strategy, saving results to `deliverables/results/quick_ablation.*`.
+
 ## Project Structure
 
 ```
