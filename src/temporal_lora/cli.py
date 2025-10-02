@@ -1,8 +1,20 @@
 """Command-line interface for Temporal LoRA pipeline."""
 
-from typing import List, Optional
+from pathlib import Path
+from typing import Optional
 
 import typer
+
+from .data.pipeline import run_data_pipeline
+from .utils.env import dump_environment
+from .utils.io import load_config
+from .utils.paths import (
+    CONFIG_DIR,
+    DATA_PROCESSED_DIR,
+    DELIVERABLES_REPRO_DIR,
+    PROJECT_ROOT,
+    ensure_dirs,
+)
 
 app = typer.Typer(
     name="temporal-lora",
@@ -14,7 +26,9 @@ app = typer.Typer(
 @app.command()
 def env_dump() -> None:
     """Dump environment info (CUDA, packages, git SHA) to deliverables/repro/."""
-    raise NotImplementedError("env-dump not yet implemented")
+    ensure_dirs()
+    dump_environment(DELIVERABLES_REPRO_DIR, repo_path=PROJECT_ROOT)
+    typer.echo("✓ Environment info dumped successfully")
 
 
 @app.command()
@@ -23,7 +37,22 @@ def prepare_data(
     output_dir: Optional[str] = typer.Option(None, help="Override output directory"),
 ) -> None:
     """Download and preprocess arXiv CS/ML dataset into time buckets."""
-    raise NotImplementedError("prepare-data not yet implemented")
+    ensure_dirs()
+    
+    # Load configs
+    data_config = load_config("data", CONFIG_DIR)
+    
+    # Override max_per_bucket if provided
+    data_config["sampling"]["max_per_bucket"] = max_per_bucket
+    
+    # Override output directory if provided
+    output_path = Path(output_dir) if output_dir else DATA_PROCESSED_DIR
+    
+    # Run pipeline
+    typer.echo("Starting data preparation pipeline...")
+    report = run_data_pipeline(data_config, output_dir=output_path)
+    
+    typer.echo(f"✓ Data preparation complete. Report saved to: {output_path / 'report.json'}")
 
 
 @app.command()
