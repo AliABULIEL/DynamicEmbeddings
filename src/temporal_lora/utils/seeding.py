@@ -1,61 +1,40 @@
-"""Reproducibility utilities for deterministic runs."""
+"""Seeding utilities for reproducibility."""
 
-import os
 import random
 from typing import Optional
 
 import numpy as np
-import torch
 
 
-def set_seed(seed: int = 42, deterministic: bool = True) -> None:
+def set_seed(seed: int = 42) -> None:
     """Set random seeds for reproducibility.
     
     Args:
-        seed: Random seed value
-        deterministic: Use deterministic algorithms (may be slower)
+        seed: Random seed value.
     """
-    # Python random
     random.seed(seed)
-    
-    # NumPy
     np.random.seed(seed)
     
-    # PyTorch
-    torch.manual_seed(seed)
-    
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)  # For multi-GPU
-    
-    # Make PyTorch deterministic
-    if deterministic:
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
-        
-        # Set environment variable for PyTorch operations
-        os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-        
-        # Enable deterministic algorithms (may fail for some ops)
-        try:
-            torch.use_deterministic_algorithms(True)
-        except RuntimeError:
-            # Some operations don't have deterministic implementations
-            pass
+    # Try to set torch seed if available
+    try:
+        import torch
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+            # Additional settings for deterministic behavior
+            torch.backends.cudnn.deterministic = True
+            torch.backends.cudnn.benchmark = False
+    except ImportError:
+        pass
 
 
-def get_generator(seed: Optional[int] = None) -> torch.Generator:
-    """Get a PyTorch random generator with optional seed.
+def get_rng(seed: Optional[int] = None) -> np.random.Generator:
+    """Get a numpy random generator with optional seed.
     
     Args:
-        seed: Random seed. If None, use default generator.
-    
+        seed: Optional seed for the generator.
+        
     Returns:
-        torch.Generator: Random generator
+        Numpy random generator.
     """
-    if seed is None:
-        return torch.default_generator
-    
-    generator = torch.Generator()
-    generator.manual_seed(seed)
-    return generator
+    return np.random.default_rng(seed)

@@ -1,99 +1,49 @@
-"""Path management utilities."""
+"""Path utilities for project structure."""
 
 from pathlib import Path
-from typing import Optional
+
+# Project root (parent of src/)
+PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
+
+# Data directories
+DATA_DIR = PROJECT_ROOT / "data"
+DATA_RAW_DIR = DATA_DIR / "raw"
+DATA_PROCESSED_DIR = DATA_DIR / "processed"
+DATA_CACHE_DIR = DATA_DIR / ".cache"
+
+# Model directories
+MODELS_DIR = PROJECT_ROOT / "models"
+CHECKPOINTS_DIR = MODELS_DIR / "checkpoints"
+ADAPTERS_DIR = MODELS_DIR / "adapters"
+INDEXES_DIR = MODELS_DIR / "indexes"
+
+# Output directories
+DELIVERABLES_DIR = PROJECT_ROOT / "deliverables"
+DELIVERABLES_REPRO_DIR = DELIVERABLES_DIR / "repro"
+DELIVERABLES_FIGURES_DIR = DELIVERABLES_DIR / "figures"
+DELIVERABLES_RESULTS_DIR = DELIVERABLES_DIR / "results"
+
+# Config directory
+CONFIG_DIR = PROJECT_ROOT / "src" / "temporal_lora" / "config"
+
+# Test directories
+TESTS_DIR = PROJECT_ROOT / "tests"
 
 
-def get_project_root() -> Path:
-    """Get the project root directory.
-    
-    Returns:
-        Path: Absolute path to project root (contains src/, tests/, etc.)
-    """
-    # Start from this file's location
-    current = Path(__file__).resolve()
-    
-    # Navigate up: utils/ -> temporal_lora/ -> src/ -> root/
-    return current.parent.parent.parent.parent
-
-
-def setup_directories(root: Optional[Path] = None) -> dict[str, Path]:
-    """Create all required project directories.
-    
-    Args:
-        root: Project root directory. If None, auto-detect.
-    
-    Returns:
-        dict: Mapping of directory names to Path objects
-    """
-    if root is None:
-        root = get_project_root()
-    
-    directories = {
-        # Data directories
-        "data": root / "data",
-        "data_processed": root / "data" / "processed",
-        "data_cache": root / "data" / ".cache",
-        
-        # Model directories
-        "models": root / "models",
-        "adapters": root / "models" / "adapters",
-        "indexes": root / "models" / "indexes",
-        
-        # Output directories
-        "deliverables": root / "deliverables",
-        "results": root / "deliverables" / "results",
-        "figures": root / "deliverables" / "figures",
-        "repro": root / "deliverables" / "repro",
-        
-        # Documentation
-        "report": root / "report",
-        "slides": root / "slides",
-        
-        # Development
-        "notebooks": root / "notebooks",
-        "scripts": root / "scripts",
-        "tests": root / "tests",
-    }
-    
-    # Create all directories
-    for dir_path in directories.values():
-        dir_path.mkdir(parents=True, exist_ok=True)
-    
-    return directories
-
-
-def get_config_dir() -> Path:
-    """Get configuration directory path.
-    
-    Returns:
-        Path: Path to config directory
-    """
-    return get_project_root() / "src" / "temporal_lora" / "config"
-
-
-def get_data_dir() -> Path:
-    """Get data directory path.
-    
-    Returns:
-        Path: Path to data directory
-    """
-    return get_project_root() / "data"
-
-
-def get_models_dir() -> Path:
-    """Get models directory path.
-    
-    Returns:
-        Path: Path to models directory
-    """
-    return get_project_root() / "models"
-
-
-def get_deliverables_dir() -> Path:
-    """Get deliverables directory path.
-    
-    Returns:
-        Path: Path to deliverables directory
-    """
-    return get_project_root() / "deliverables"
+def ensure_dirs() -> None:
+    """Create all required directories if they don't exist."""
+    dirs = [
+        DATA_DIR,
+        DATA_PROCESSED_DIR,
+        DATA_CACHE_DIR,
+        MODELS_DIR,
+        CHECKPOINTS_DIR,
+        ADAPTERS_DIR,
+        INDEXES_DIR,
+        DELIVERABLES_DIR,
+        DELIVERABLES_REPRO_DIR,
+        DELIVERABLES_FIGURES_DIR,
+        DELIVERABLES_RESULTS_DIR,
+    ]
+    for directory in dirs:
+        directory.mkdir(parents=True, exist_ok=True)

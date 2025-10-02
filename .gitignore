@@ -16,17 +16,14 @@ parts/
 sdist/
 var/
 wheels/
-pip-wheel-metadata/
-share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-MANIFEST
 
 # Virtual environments
 venv/
-ENV/
 env/
+ENV/
 .venv
 
 # IDE
@@ -35,52 +32,23 @@ env/
 *.swp
 *.swo
 *~
-.DS_Store
-
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-.tox/
-.mypy_cache/
-.dmypy.json
-dmypy.json
 
 # Jupyter
-.ipynb_checkpoints
+.ipynb_checkpoints/
 *.ipynb
 
-# Data (keep structure, ignore large files)
-data/raw/*.jsonl
-data/raw/*.csv
-data/raw/*.parquet
-data/processed/*.npy
-data/processed/*.pt
-data/.cache/
-
-# Model artifacts
+# Project-specific
+data/raw/
+data/processed/
 models/checkpoints/
 models/adapters/
 models/indexes/
-*.safetensors
-*.bin
-*.pt
-!models/.gitkeep
-
-# Outputs
-outputs/
-logs/
-wandb/
-mlruns/
-deliverables/results/
-deliverables/figures/
+deliverables/*.png
+deliverables/*.csv
 deliverables/repro/
-
-# Temp
-*.tmp
+.cache/
 *.log
-.env
-.env.local
 
-# Pre-commit
-.pre-commit-config.yaml.backup
+# OS
+.DS_Store
+Thumbs.db

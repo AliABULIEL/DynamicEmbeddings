@@ -1,90 +1,61 @@
-"""Logging utilities with rich formatting."""
+"""Logging utilities."""
 
 import logging
 import sys
-from pathlib import Path
 from typing import Optional
 
-from rich.console import Console
-from rich.logging import RichHandler
 
-
-# Global console for rich output
-console = Console()
-
-
-def setup_logging(
+def setup_logger(
+    name: str = "temporal_lora",
     level: str = "INFO",
-    log_file: Optional[Path] = None,
-    rich_tracebacks: bool = True,
-) -> None:
-    """Setup logging with rich formatting.
+    log_file: Optional[str] = None,
+) -> logging.Logger:
+    """Set up a logger with console and optional file output.
     
     Args:
-        level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-        log_file: Optional file path to write logs
-        rich_tracebacks: Use rich formatting for tracebacks
-    """
-    # Configure rich handler
-    handlers: list[logging.Handler] = [
-        RichHandler(
-            console=console,
-            rich_tracebacks=rich_tracebacks,
-            tracebacks_show_locals=False,
-            markup=True,
-        )
-    ]
-    
-    # Add file handler if specified
-    if log_file is not None:
-        log_file.parent.mkdir(parents=True, exist_ok=True)
-        file_handler = logging.FileHandler(log_file)
-        file_handler.setFormatter(
-            logging.Formatter(
-                "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-                datefmt="%Y-%m-%d %H:%M:%S",
-            )
-        )
-        handlers.append(file_handler)
-    
-    # Configure root logger
-    logging.basicConfig(
-        level=level.upper(),
-        format="%(message)s",
-        datefmt="[%X]",
-        handlers=handlers,
-    )
-    
-    # Suppress noisy third-party loggers
-    logging.getLogger("transformers").setLevel(logging.WARNING)
-    logging.getLogger("datasets").setLevel(logging.WARNING)
-    logging.getLogger("urllib3").setLevel(logging.WARNING)
-    logging.getLogger("filelock").setLevel(logging.WARNING)
-
-
-def get_logger(name: str) -> logging.Logger:
-    """Get a logger instance.
-    
-    Args:
-        name: Logger name (typically __name__)
-    
+        name: Logger name.
+        level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
+        log_file: Optional path to log file.
+        
     Returns:
-        logging.Logger: Configured logger instance
+        Configured logger instance.
     """
-    return logging.getLogger(name)
+    logger = logging.getLogger(name)
+    logger.setLevel(getattr(logging, level.upper()))
+    
+    # Remove existing handlers to avoid duplicates
+    logger.handlers.clear()
+    
+    # Console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(getattr(logging, level.upper()))
+    console_formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    console_handler.setFormatter(console_formatter)
+    logger.addHandler(console_handler)
+    
+    # File handler (optional)
+    if log_file:
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setLevel(getattr(logging, level.upper()))
+        file_handler.setFormatter(console_formatter)
+        logger.addHandler(file_handler)
+    
+    return logger
 
 
-def log_section(title: str, logger: Optional[logging.Logger] = None) -> None:
-    """Log a section header with rich formatting.
+def get_logger(name: str = "temporal_lora") -> logging.Logger:
+    """Get an existing logger or create a default one.
     
     Args:
-        title: Section title
-        logger: Logger instance. If None, use console.
+        name: Logger name.
+        
+    Returns:
+        Logger instance.
     """
-    separator = "=" * 80
-    if logger is not None:
-        logger.info(f"\n{separator}")
-        logger.info(f"  {title}")
-        logger.info(f"{separator}\n")
-    else:
-        console.rule(f"[bold blue]{title}[/bold blue]")
+    logger = logging.getLogger(name)
+    if not logger.handlers:
+        return setup_logger(name)
+    return logger
