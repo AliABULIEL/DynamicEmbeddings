@@ -254,16 +254,72 @@ def evaluate(
 
 @app.command()
 def visualize(
-    output_dir: Optional[str] = typer.Option(None, help="Override output directory"),
+    baseline_results: Optional[str] = typer.Option(
+        None, help="Path to baseline results CSV"
+    ),
+    lora_results: Optional[str] = typer.Option(
+        None, help="Path to LoRA results CSV"
+    ),
+    embeddings_dir: Optional[str] = typer.Option(
+        None, help="Path to embeddings directory for UMAP"
+    ),
+    output_dir: Optional[str] = typer.Option(
+        None, help="Output directory for figures"
+    ),
 ) -> None:
-    """Generate heatmaps, UMAP, and drift trajectories."""
-    raise NotImplementedError("visualize not yet implemented")
+    """Generate heatmaps and UMAP visualizations."""
+    from .viz.plots import visualize_results
+    
+    ensure_dirs()
+    
+    # Default paths
+    baseline_path = Path(baseline_results) if baseline_results else DELIVERABLES_RESULTS_DIR / "baseline_results.csv"
+    lora_path = Path(lora_results) if lora_results else DELIVERABLES_RESULTS_DIR / "lora_results.csv"
+    emb_dir = Path(embeddings_dir) if embeddings_dir else PROJECT_ROOT / "models" / "embeddings_lora"
+    output_path = Path(output_dir) if output_dir else PROJECT_ROOT / "deliverables" / "figures"
+    
+    typer.echo("Generating visualizations...")
+    typer.echo(f"Baseline results: {baseline_path}")
+    typer.echo(f"LoRA results: {lora_path}")
+    typer.echo(f"Embeddings: {emb_dir}")
+    typer.echo(f"Output: {output_path}")
+    
+    visualize_results(
+        baseline_results_path=baseline_path,
+        lora_results_path=lora_path,
+        embeddings_dir=emb_dir,
+        output_dir=output_path,
+    )
+    
+    typer.echo(f"\n✓ Visualizations saved to: {output_path}")
 
 
 @app.command()
 def export_deliverables() -> None:
     """Consolidate results, figures, and repro info into deliverables/."""
-    raise NotImplementedError("export-deliverables not yet implemented")
+    import subprocess
+    import sys
+    
+    ensure_dirs()
+    
+    export_script = PROJECT_ROOT / "scripts" / "export_results.py"
+    
+    if not export_script.exists():
+        typer.echo(f"❌ Export script not found: {export_script}")
+        raise typer.Exit(1)
+    
+    typer.echo("Running export script...\n")
+    
+    result = subprocess.run(
+        [sys.executable, str(export_script)],
+        cwd=PROJECT_ROOT,
+    )
+    
+    if result.returncode != 0:
+        typer.echo("\n❌ Export failed")
+        raise typer.Exit(1)
+    
+    typer.echo("\n✓ Deliverables exported successfully")
 
 
 def main() -> None:
