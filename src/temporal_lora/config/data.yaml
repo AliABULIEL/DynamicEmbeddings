@@ -1,0 +1,45 @@
+# Data configuration for temporal LoRA training
+
+# Dataset source
+dataset:
+  # Primary source: HuggingFace dataset
+  hf_dataset: "arxiv-abstracts-cs-ml"  # Placeholder - actual dataset TBD
+  hf_split: "train"
+  
+  # Fallback: CSV with schema (paper_id, title, abstract, year)
+  csv_path: null  # Set if using CSV fallback
+  
+  # Sampling
+  max_per_bucket: 6000  # Maximum samples per time bucket
+  min_year: 2010  # Earliest year to include
+  max_year: 2025  # Latest year to include
+  
+  # Validation split
+  val_ratio: 0.15  # 15% held out for validation
+  test_ratio: 0.10  # 10% held out for final test
+
+# Time buckets (define period boundaries)
+time_buckets:
+  # Default: 2 buckets
+  boundaries: [2018]  # Documents <=2018 in bucket 0, 2019-2025 in bucket 1
+  
+  # Alternative: 3 buckets (uncomment for ablation)
+  # boundaries: [2017, 2021]  # <=2017, 2018-2021, 2022-2025
+  
+  labels:
+    - "pre_2019"
+    - "2019_2024"
+
+# Text preprocessing
+preprocessing:
+  max_length: 512  # Maximum sequence length for encoder
+  combine_title_abstract: true  # Whether to concatenate title + abstract
+  separator: " "  # Separator between title and abstract
+  lowercase: false  # Preserve original casing
+  remove_special_chars: false  # Keep punctuation
+
+# Caching
+cache:
+  enabled: true
+  cache_dir: "data/.cache"
+  processed_dir: "data/processed"

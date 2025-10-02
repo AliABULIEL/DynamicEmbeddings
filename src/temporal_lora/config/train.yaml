@@ -1,0 +1,59 @@
+# Training configuration for temporal LoRA adapters
+
+# Training hyperparameters
+training:
+  epochs: 2  # Number of training epochs (2-3 typical)
+  batch_size: 32  # Per-device batch size (reduce if OOM)
+  learning_rate: 5e-4  # LoRA learning rate (higher than full fine-tuning)
+  weight_decay: 0.01  # L2 regularization
+  warmup_ratio: 0.1  # Warmup proportion of total steps
+  
+  # Gradient management
+  grad_accumulation_steps: 1  # Effective batch = batch_size * grad_accumulation_steps
+  max_grad_norm: 1.0  # Gradient clipping
+  
+  # Optimization
+  optimizer: "adamw"  # adamw, adam, or sgd
+  scheduler: "linear"  # linear, cosine, or constant
+  
+  # Early stopping
+  early_stopping:
+    enabled: true
+    patience: 3  # Epochs without improvement before stopping
+    min_delta: 0.001  # Minimum change to qualify as improvement
+
+# Contrastive learning
+contrastive:
+  loss: "cosine_similarity"  # cosine_similarity or triplet
+  temperature: 0.05  # Temperature for contrastive loss
+  
+  # Negative sampling strategy
+  negatives:
+    strategy: "cross_period_biased"  # random or cross_period_biased
+    num_negatives: 5  # Negatives per positive
+    cross_period_ratio: 0.7  # Proportion from different time bucket (if biased)
+    
+    # Hard negative mining
+    hard_negatives: false  # Sample hard negatives based on similarity
+    hard_negative_ratio: 0.3  # Proportion of hard negatives if enabled
+
+# Per-bucket training
+per_bucket:
+  train_separately: true  # Train one adapter per bucket independently
+  share_base: true  # All adapters share the frozen base encoder
+
+# Logging and monitoring
+logging:
+  log_every_n_steps: 50  # Log training metrics every N steps
+  eval_every_n_epochs: 1  # Evaluate on validation set every N epochs
+  save_every_n_epochs: 1  # Save checkpoint every N epochs
+  
+  # Weights & Biases (optional)
+  wandb:
+    enabled: false
+    project: "temporal-lora"
+    entity: null  # W&B username or team
+
+# Reproducibility
+seed: 42  # Random seed for reproducibility
+deterministic: true  # Use deterministic algorithms (may be slower)

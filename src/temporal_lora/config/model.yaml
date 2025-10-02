@@ -1,0 +1,35 @@
+# Model configuration for temporal LoRA adapters
+
+# Base sentence encoder (frozen)
+base_model:
+  name: "sentence-transformers/all-MiniLM-L6-v2"
+  embedding_dim: 384  # Output dimension
+  freeze: true  # Keep base model frozen during training
+  device: "auto"  # auto, cuda, or cpu
+
+# LoRA adapter configuration
+lora:
+  r: 16  # Rank of LoRA matrices (8, 16, 32 for ablation)
+  alpha: 32  # Scaling factor (typically 2 * r)
+  dropout: 0.1  # Dropout for LoRA layers
+  
+  # Target modules (auto-detected Q/K/V attention)
+  # Common patterns: ["q_proj", "v_proj"], ["query", "value"], ["q", "k", "v"]
+  target_modules: "auto"  # Auto-detect attention Q/K/V layers
+  
+  # Fail-fast behavior
+  fail_on_missing_target: true  # Error if target modules not found
+  
+  # Bias handling
+  bias: "none"  # none, all, or lora_only
+
+# Training precision
+mixed_precision:
+  enabled: true  # Use fp16 when CUDA available
+  dtype: "float16"  # float16 or bfloat16
+
+# Model saving
+checkpointing:
+  save_dir: "models/adapters"
+  save_best_only: true  # Only save best validation checkpoint
+  metric: "val_loss"  # Metric to monitor (val_loss, val_accuracy, etc.)

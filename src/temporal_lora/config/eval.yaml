@@ -1,0 +1,66 @@
+# Evaluation configuration for temporal LoRA retrieval
+
+# Retrieval settings
+retrieval:
+  # Index type per bucket
+  index_type: "IndexFlatIP"  # FAISS index (inner product for cosine similarity)
+  index_dir: "models/indexes"
+  
+  # Multi-index retrieval mode
+  mode: "multi-index"  # single-index (bucket-specific) or multi-index (all buckets)
+  
+  # Merge strategy for multi-index (when query could match docs from multiple buckets)
+  merge_strategy: "softmax"  # softmax, mean, max, or rrf (reciprocal rank fusion)
+  merge_temperature: 0.1  # Temperature for softmax merge (lower = more peaked)
+  
+  # Top-k retrieval
+  top_k: 100  # Retrieve top 100 for Recall@100
+
+# Evaluation scenarios
+scenarios:
+  # Within-period: query and doc from same time bucket
+  within_period:
+    enabled: true
+    num_queries: 1000  # Sample size per bucket
+  
+  # Cross-period: query and doc from different buckets
+  cross_period:
+    enabled: true
+    num_queries: 1000  # Sample size per bucket pair
+  
+  # All-period: mixed query/doc pairs
+  all_period:
+    enabled: true
+    num_queries: 2000  # Total sample size
+
+# Metrics
+metrics:
+  # Primary metrics
+  ndcg_at_k: [10]  # Normalized Discounted Cumulative Gain
+  recall_at_k: [10, 100]  # Recall at different cutoffs
+  mrr: true  # Mean Reciprocal Rank
+  
+  # Statistical tests
+  bootstrap:
+    enabled: true
+    n_samples: 1000  # Bootstrap resamples
+    confidence_level: 0.95  # 95% confidence intervals
+    seed: 42
+  
+  permutation_test:
+    enabled: true
+    n_permutations: 1000  # Permutation samples
+    alpha: 0.01  # Significance level (p < 0.01)
+    baseline: "static"  # Compare against static baseline
+    seed: 42
+
+# Baseline comparison
+baseline:
+  type: "static"  # static (no LoRA) or random
+  static_model: "sentence-transformers/all-MiniLM-L6-v2"  # Base model for static baseline
+
+# Output
+output:
+  results_dir: "deliverables/results"
+  save_per_query: false  # Save individual query results (large file)
+  save_aggregated: true  # Save aggregated metrics only
