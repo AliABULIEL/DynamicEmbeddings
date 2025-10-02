@@ -7,18 +7,30 @@ dataset:
   year_field: "year"
 
 buckets:
-  # Time period definitions
-  - name: "early"
-    range: [null, 2018]  # ≤2018
-  - name: "recent"
-    range: [2019, 2024]  # 2019-2024
+  # Flexible time period definitions
+  # Format: name and range [start_year, end_year] (use null for open-ended)
+  # Default: 5 bins for stronger drift signal
+  - name: "pre2016"
+    range: [null, 2015]  # ≤2015
+  - name: "2016-2018"
+    range: [2016, 2018]
+  - name: "2019-2021"
+    range: [2019, 2021]
+  - name: "2022-2023"
+    range: [2022, 2023]
+  - name: "2024+"
+    range: [2024, null]  # 2024 onwards
 
 sampling:
   max_per_bucket: 6000  # Limit samples per bucket for fast training
+  balance_per_bin: true  # Enforce equal counts across bins (min across bins or max_per_bucket)
   seed: 42
   stratify: true  # Balance across years within each bucket
 
 preprocessing:
   min_abstract_length: 50  # Minimum abstract length (chars)
   max_abstract_length: 2000  # Maximum abstract length (chars)
-  remove_duplicates: true
+  max_tokens: 512  # Maximum tokens (simple whitespace split)
+  remove_duplicates: true  # Remove near-duplicates via hash
+  clean_html: true  # Strip HTML tags
+  collapse_whitespace: true  # Normalize whitespace

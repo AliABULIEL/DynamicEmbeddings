@@ -40,6 +40,12 @@ def env_dump() -> None:
 @app.command()
 def prepare_data(
     max_per_bucket: int = typer.Option(6000, help="Max samples per time bucket"),
+    balance_per_bin: bool = typer.Option(
+        True, "--balance-per-bin/--no-balance-per-bin", help="Enforce equal counts across bins"
+    ),
+    bins: Optional[str] = typer.Option(
+        None, help="Custom bins (comma-separated, e.g., 'pre2016:null-2015,2016-2018:2016-2018')"
+    ),
     output_dir: Optional[str] = typer.Option(None, help="Override output directory"),
 ) -> None:
     """Download and preprocess arXiv CS/ML dataset into time buckets."""
@@ -50,12 +56,33 @@ def prepare_data(
     
     # Override max_per_bucket if provided
     data_config["sampling"]["max_per_bucket"] = max_per_bucket
+    data_config["sampling"]["balance_per_bin"] = balance_per_bin
+    
+    # Override bins if provided
+    if bins:
+        typer.echo(f"Using custom bins: {bins}")
+        # Parse custom bins specification
+        custom_buckets = []
+        for bin_spec in bins.split(","):
+            name, year_range = bin_spec.split(":")
+            start_year, end_year = year_range.split("-")
+            custom_buckets.append({
+                "name": name.strip(),
+                "range": [
+                    None if start_year.strip().lower() == "null" else int(start_year.strip()),
+                    None if end_year.strip().lower() == "null" else int(end_year.strip()),
+                ]
+            })
+        data_config["buckets"] = custom_buckets
     
     # Override output directory if provided
     output_path = Path(output_dir) if output_dir else DATA_PROCESSED_DIR
     
     # Run pipeline
     typer.echo("Starting data preparation pipeline...")
+    typer.echo(f"Balance per bin: {balance_per_bin}")
+    typer.echo(f"Max per bucket: {max_per_bucket}")
+    typer.echo(f"Number of bins: {len(data_config['buckets'])}")
     report = run_data_pipeline(data_config, output_dir=output_path)
     
     typer.echo(f"✓ Data preparation complete. Report saved to: {output_path / 'report.json'}")

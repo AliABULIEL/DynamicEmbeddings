@@ -7,6 +7,7 @@ from typing import Dict, Any
 import pandas as pd
 
 from .datasets import load_hf_or_csv
+from .preprocessing import clean_and_preprocess
 from .bucketing import bucket_and_split
 from .pairs import create_positive_pairs, save_pairs_by_bucket_and_split
 from ..utils.logging import get_logger
@@ -87,12 +88,21 @@ def run_data_pipeline(
     df = load_hf_or_csv(config)
     logger.info(f"Loaded {len(df)} papers")
     
+    # Clean and preprocess
+    logger.info("Cleaning and preprocessing...")
+    preprocessing_config = config.get("preprocessing", {})
+    df = clean_and_preprocess(df, preprocessing_config)
+    logger.info(f"After preprocessing: {len(df)} papers")
+    
     # Bucket and split
     logger.info("Bucketing and splitting...")
     max_per_bucket = config["sampling"]["max_per_bucket"]
+    balance_per_bin = config["sampling"].get("balance_per_bin", False)
     bucket_config = config["buckets"]
     
-    bucketed_df = bucket_and_split(df, bucket_config, max_per_bucket, seed=seed)
+    bucketed_df = bucket_and_split(
+        df, bucket_config, max_per_bucket, balance_per_bin=balance_per_bin, seed=seed
+    )
     logger.info(f"After bucketing: {len(bucketed_df)} papers")
     
     # Create positive pairs
