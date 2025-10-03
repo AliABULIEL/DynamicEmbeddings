@@ -10,7 +10,6 @@ from .train.trainer import train_all_buckets
 from .eval.encoder import encode_and_cache_bucket
 from .eval.indexes import build_bucket_indexes
 from .eval.evaluate import (
-    run_evaluation,
     run_full_evaluation,
     run_temperature_sweep,
 )

@@ -245,6 +245,9 @@ def create_all_heatmaps(
     """
     logger.info("Creating heatmap panels for all metrics...")
     
+    # Ensure output directory exists
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
     metrics = {
         "ndcg_at_10": "NDCG@10",
         "recall_at_10": "Recall@10",
