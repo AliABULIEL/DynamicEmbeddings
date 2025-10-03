@@ -27,6 +27,32 @@ pytest
 
 ---
 
+## FAISS Segmentation Fault (macOS)
+
+### Problem: `Fatal Python error: Segmentation fault` during FAISS tests
+
+**Cause:** FAISS architecture mismatch or BLAS library conflicts on macOS.
+
+**Quick Diagnosis:**
+```bash
+bash scripts/diagnose_faiss.sh
+```
+
+**Solutions:** See detailed guide at [docs/FAISS_TROUBLESHOOTING.md](docs/FAISS_TROUBLESHOOTING.md)
+
+Quick fix:
+```bash
+pip uninstall -y faiss-cpu
+pip install faiss-cpu --no-cache-dir
+```
+
+For Apple Silicon Macs, conda is recommended:
+```bash
+conda install -c conda-forge faiss-cpu
+```
+
+---
+
 ## Common Issues
 
 ### 1. Import Error: `cannot import name 'cached_download'`
