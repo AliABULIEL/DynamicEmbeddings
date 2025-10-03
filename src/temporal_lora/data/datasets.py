@@ -152,6 +152,12 @@ def load_hf_or_csv(config: Dict[str, Any]) -> pd.DataFrame:
         # Try relative to data/raw/
         from ..utils.paths import DATA_RAW_DIR
         csv_path = DATA_RAW_DIR / dataset_name
+        
+        # If path doesn't exist, try with .csv extension
+        if not csv_path.exists() and not dataset_name.endswith('.csv'):
+            csv_path_with_ext = DATA_RAW_DIR / f"{dataset_name}.csv"
+            if csv_path_with_ext.exists():
+                csv_path = csv_path_with_ext
     
     try:
         return load_from_csv(csv_path, config["dataset"])
