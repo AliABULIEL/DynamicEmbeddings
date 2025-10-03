@@ -20,9 +20,12 @@ def build_faiss_index(embeddings: np.ndarray) -> faiss.IndexFlatIP:
     Returns:
         FAISS index.
     """
+    # Ensure contiguous float32 array to prevent segfaults
+    embeddings = np.ascontiguousarray(embeddings, dtype=np.float32)
+    
     dim = embeddings.shape[1]
     index = faiss.IndexFlatIP(dim)
-    index.add(embeddings.astype(np.float32))
+    index.add(embeddings)
     return index
 
 
@@ -66,7 +69,10 @@ def query_index(
     Returns:
         Tuple of (scores, indices). Both are (n_queries, k).
     """
-    scores, indices = index.search(query_embeddings.astype(np.float32), k)
+    # Ensure contiguous float32 array to prevent segfaults
+    query_embeddings = np.ascontiguousarray(query_embeddings, dtype=np.float32)
+    
+    scores, indices = index.search(query_embeddings, k)
     return scores, indices
 
 
