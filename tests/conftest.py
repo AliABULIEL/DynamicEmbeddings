@@ -21,6 +21,13 @@ def pytest_configure(config):
     # For Apple Silicon Macs, ensure we're not using Rosetta
     if sys.platform == "darwin":
         os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+    
+    # Disable W&B logging in tests
+    os.environ["WANDB_MODE"] = "disabled"
+    os.environ["WANDB_DISABLED"] = "true"
+    
+    # Disable tokenizers parallelism warning
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
 @pytest.fixture(autouse=True, scope="session")
