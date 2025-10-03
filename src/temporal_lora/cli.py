@@ -1,7 +1,7 @@
 """Command-line interface for Temporal LoRA pipeline."""
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 
 import typer
 
@@ -9,7 +9,12 @@ from .data.pipeline import run_data_pipeline
 from .train.trainer import train_all_buckets
 from .eval.encoder import encode_and_cache_bucket
 from .eval.indexes import build_bucket_indexes
-from .eval.evaluate import run_evaluation
+from .eval.evaluate import (
+    run_evaluation,
+    run_full_evaluation,
+    run_temperature_sweep,
+)
+from .eval.efficiency import generate_efficiency_summary
 from .utils.env import dump_environment
 from .utils.io import load_config
 from .utils.paths import (
@@ -319,6 +324,110 @@ def evaluate(
             typer.echo(f"  {metric_name}: {value:.4f}")
     
     typer.echo(f"\n✓ Results saved to: {output_path}")
+
+
+@app.command()
+def evaluate_all_modes(
+    modes: str = typer.Option(
+        "baseline_frozen,lora",
+        help="Comma-separated list of modes to evaluate"
+    ),
+    temperature_sweep: bool = typer.Option(
+        True,
+        "--temperature-sweep/--no-temperature-sweep",
+        help="Run temperature sweep for multi-index merge"
+    ),
+    temperatures: str = typer.Option(
+        "1.5,2.0,3.0",
+        help="Comma-separated temperatures for sweep"
+    ),
+    cache_dir: Optional[str] = typer.Option(None, help="Cache directory"),
+    output_dir: Optional[str] = typer.Option(None, help="Output directory"),
+) -> None:
+    """Run comprehensive evaluation across all training modes."""
+    ensure_dirs()
+    
+    # Load configs
+    data_config = load_config("data", CONFIG_DIR)
+    
+    # Parse inputs
+    mode_list = [m.strip() for m in modes.split(",")]
+    temp_list = [float(t.strip()) for t in temperatures.split(",")]
+    buckets = [b["name"] for b in data_config["buckets"]]
+    
+    # Set paths
+    data_path = DATA_PROCESSED_DIR
+    cache_path = Path(cache_dir) if cache_dir else PROJECT_ROOT / ".cache"
+    output_path = Path(output_dir) if output_dir else DELIVERABLES_RESULTS_DIR
+    
+    typer.echo("Running full evaluation across modes:")
+    typer.echo(f"  Modes: {', '.join(mode_list)}")
+    typer.echo(f"  Buckets: {', '.join(buckets)}")
+    typer.echo(f"  Temperature sweep: {temperature_sweep}")
+    if temperature_sweep:
+        typer.echo(f"  Temperatures: {temp_list}")
+    typer.echo()
+    
+    # Run evaluation
+    run_full_evaluation(
+        data_dir=data_path,
+        cache_dir=cache_path,
+        modes=mode_list,
+        buckets=buckets,
+        output_dir=output_path,
+        run_temperature_sweep_flag=temperature_sweep,
+        temperatures=temp_list,
+    )
+    
+    typer.echo(f"\n✓ Full evaluation complete! Results saved to: {output_path}")
+
+
+@app.command()
+def efficiency_summary(
+    modes: str = typer.Option(
+        "baseline_frozen,lora,full_ft,seq_ft",
+        help="Comma-separated list of modes"
+    ),
+    adapters_dir: Optional[str] = typer.Option(None, help="LoRA adapters directory"),
+    full_ft_dir: Optional[str] = typer.Option(None, help="Full FT directory"),
+    seq_ft_dir: Optional[str] = typer.Option(None, help="Sequential FT directory"),
+    output: Optional[str] = typer.Option(None, help="Output CSV path"),
+) -> None:
+    """Generate efficiency summary table (params, size, runtime)."""
+    ensure_dirs()
+    
+    # Load configs
+    data_config = load_config("data", CONFIG_DIR)
+    model_config = load_config("model", CONFIG_DIR)
+    
+    # Parse inputs
+    mode_list = [m.strip() for m in modes.split(",")]
+    buckets = [b["name"] for b in data_config["buckets"]]
+    base_model = model_config["base_model"]["name"]
+    
+    # Set paths
+    adapters_path = Path(adapters_dir) if adapters_dir else ADAPTERS_DIR
+    full_ft_path = Path(full_ft_dir) if full_ft_dir else PROJECT_ROOT / "artifacts" / "full_ft"
+    seq_ft_path = Path(seq_ft_dir) if seq_ft_dir else PROJECT_ROOT / "artifacts" / "seq_ft"
+    output_path = Path(output) if output else DELIVERABLES_RESULTS_DIR / "efficiency_summary.csv"
+    
+    typer.echo("Generating efficiency summary...")
+    typer.echo(f"  Modes: {', '.join(mode_list)}")
+    typer.echo(f"  Base model: {base_model}")
+    typer.echo()
+    
+    # Generate summary
+    df = generate_efficiency_summary(
+        base_model_name=base_model,
+        modes=mode_list,
+        adapters_dir=adapters_path,
+        full_ft_dir=full_ft_path,
+        seq_ft_dir=seq_ft_path,
+        buckets=buckets,
+        output_path=output_path,
+    )
+    
+    typer.echo(f"\n✓ Efficiency summary saved to: {output_path}")
 
 
 @app.command()
