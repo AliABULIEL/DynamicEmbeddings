@@ -91,14 +91,15 @@ class BenchmarkComparison:
         Returns:
             Tuple of (titles, abstracts, paper_ids)
         """
-        test_file = self.data_dir / bucket / "test.json"
+        test_file = self.data_dir / bucket / "test.parquet"
         
-        with open(test_file, "r") as f:
-            data = [json.loads(line) for line in f]
+        # Load parquet file
+        df = pd.read_parquet(test_file)
         
-        titles = [d["title"] for d in data]
-        abstracts = [d["abstract"] for d in data]
-        paper_ids = [d["paper_id"] for d in data]
+        # Extract data from positive pairs
+        titles = df["text_a"].tolist()
+        abstracts = df["text_b"].tolist()
+        paper_ids = df["paper_id"].tolist()
         
         return titles, abstracts, paper_ids
     
@@ -360,7 +361,16 @@ def run_benchmark(
         Results DataFrame
     """
     if buckets is None:
-        buckets = ["bucket_0", "bucket_1"]
+        # Auto-discover buckets from data directory
+        buckets = []
+        for item in sorted(data_dir.iterdir()):
+            if item.is_dir() and (item / "test.parquet").exists():
+                buckets.append(item.name)
+        
+        if not buckets:
+            raise ValueError(f"No buckets found in {data_dir}")
+        
+        logger.info(f"Auto-discovered buckets: {buckets}")
     
     comparison = BenchmarkComparison(
         data_dir=data_dir,
