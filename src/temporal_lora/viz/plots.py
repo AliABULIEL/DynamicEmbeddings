@@ -14,227 +14,178 @@ from ..utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-def create_performance_heatmap(
-    results_df: pd.DataFrame,
-    metric: str = "ndcg@10",
-    title: str = "Performance Heatmap",
+def plot_heatmaps_panel(
+    baseline_matrix: pd.DataFrame,
+    lora_matrix: pd.DataFrame,
+    delta_matrix: Optional[pd.DataFrame] = None,
+    metric_name: str = "NDCG@10",
     output_path: Optional[Path] = None,
-    figsize: Tuple[int, int] = (10, 8),
-    vmin: Optional[float] = None,
-    vmax: Optional[float] = None,
+    figsize: Tuple[int, int] = (18, 6),
+    annot: bool = True,
+    fmt: str = ".3f",
 ) -> None:
-    """Create a heatmap of retrieval performance.
+    """Create three-panel heatmap: baseline, LoRA, and delta.
     
     Args:
-        results_df: DataFrame with scenarios as rows and metrics as columns.
-        metric: Metric to visualize.
-        title: Plot title.
+        baseline_matrix: Baseline performance matrix (query_bucket × doc_bucket).
+        lora_matrix: LoRA performance matrix (query_bucket × doc_bucket).
+        delta_matrix: Delta matrix (LoRA - baseline). Computed if not provided.
+        metric_name: Name of metric being visualized.
         output_path: Path to save figure.
         figsize: Figure size.
-        vmin: Minimum value for colormap.
-        vmax: Maximum value for colormap.
+        annot: Whether to annotate cells with values.
+        fmt: Format string for annotations.
     """
-    plt.figure(figsize=figsize)
+    logger.info(f"Creating heatmap panel for {metric_name}")
     
-    # Extract metric column
-    if metric not in results_df.columns:
-        logger.warning(f"Metric {metric} not found in results")
-        return
+    # Compute delta if not provided
+    if delta_matrix is None:
+        delta_matrix = lora_matrix - baseline_matrix
     
-    # Create matrix for heatmap
-    # Rows: scenarios, Cols: buckets
-    # Parse scenario names
-    data_matrix = []
-    row_labels = []
-    col_labels = []
+    # Determine consistent value range for baseline and LoRA
+    vmin = min(baseline_matrix.values.min(), lora_matrix.values.min())
+    vmax = max(baseline_matrix.values.max(), lora_matrix.values.max())
     
-    for idx, row in results_df.iterrows():
-        row_labels.append(str(idx))
-        data_matrix.append([row[metric]])
-    
-    if len(data_matrix) == 0:
-        logger.warning("No data to plot")
-        return
-    
-    # Create heatmap
-    sns.heatmap(
-        data_matrix,
-        annot=True,
-        fmt=".3f",
-        cmap="RdYlGn",
-        vmin=vmin if vmin is not None else 0.0,
-        vmax=vmax if vmax is not None else 1.0,
-        cbar_kws={"label": metric},
-        yticklabels=row_labels,
-        xticklabels=[metric],
-    )
-    
-    plt.title(title, fontsize=14, fontweight="bold")
-    plt.xlabel("Metric")
-    plt.ylabel("Scenario")
-    plt.tight_layout()
-    
-    if output_path:
-        plt.savefig(output_path, dpi=300, bbox_inches="tight")
-        logger.info(f"Saved heatmap to: {output_path}")
-    else:
-        plt.show()
-    
-    plt.close()
-
-
-def create_comparison_heatmaps(
-    baseline_results: pd.DataFrame,
-    lora_results: pd.DataFrame,
-    metric: str = "ndcg@10",
-    output_dir: Path = None,
-    figsize: Tuple[int, int] = (18, 6),
-) -> None:
-    """Create three heatmaps: baseline, LoRA, and delta.
-    
-    Args:
-        baseline_results: Baseline results DataFrame.
-        lora_results: LoRA results DataFrame.
-        metric: Metric to visualize.
-        output_dir: Directory to save figures.
-        figsize: Figure size.
-    """
-    fig, axes = plt.subplots(1, 3, figsize=figsize)
-    
-    # Get common scenarios
-    common_scenarios = list(set(baseline_results.index) & set(lora_results.index))
-    common_scenarios.sort()
-    
-    if len(common_scenarios) == 0:
-        logger.warning("No common scenarios between baseline and LoRA")
-        return
-    
-    # Extract values
-    baseline_values = [baseline_results.loc[s, metric] for s in common_scenarios]
-    lora_values = [lora_results.loc[s, metric] for s in common_scenarios]
-    delta_values = [l - b for l, b in zip(lora_values, baseline_values)]
-    
-    # Determine consistent value range
-    all_values = baseline_values + lora_values
-    vmin = min(all_values) * 0.95
-    vmax = max(all_values) * 1.05
+    # Add some padding
+    value_range = vmax - vmin
+    vmin = vmin - 0.05 * value_range
+    vmax = vmax + 0.05 * value_range
     
     # Delta range (symmetric around 0)
-    delta_max = max(abs(min(delta_values)), abs(max(delta_values)))
-    delta_range = (-delta_max * 1.1, delta_max * 1.1)
+    delta_abs_max = max(abs(delta_matrix.values.min()), abs(delta_matrix.values.max()))
+    delta_vmin = -delta_abs_max * 1.1
+    delta_vmax = delta_abs_max * 1.1
+    
+    # Create figure with three subplots
+    fig, axes = plt.subplots(1, 3, figsize=figsize)
     
     # Baseline heatmap
     sns.heatmap(
-        np.array(baseline_values).reshape(-1, 1),
-        annot=True,
-        fmt=".3f",
+        baseline_matrix,
+        annot=annot,
+        fmt=fmt,
         cmap="Blues",
         vmin=vmin,
         vmax=vmax,
-        cbar_kws={"label": metric},
-        yticklabels=common_scenarios,
-        xticklabels=["Baseline"],
+        cbar_kws={"label": metric_name},
         ax=axes[0],
+        square=True,
     )
-    axes[0].set_title("Baseline", fontsize=12, fontweight="bold")
-    axes[0].set_ylabel("Scenario")
+    axes[0].set_title("Baseline (Frozen)", fontsize=12, fontweight="bold")
+    axes[0].set_xlabel("Doc Bucket")
+    axes[0].set_ylabel("Query Bucket")
     
     # LoRA heatmap
     sns.heatmap(
-        np.array(lora_values).reshape(-1, 1),
-        annot=True,
-        fmt=".3f",
+        lora_matrix,
+        annot=annot,
+        fmt=fmt,
         cmap="Blues",
         vmin=vmin,
         vmax=vmax,
-        cbar_kws={"label": metric},
-        yticklabels=common_scenarios,
-        xticklabels=["LoRA"],
+        cbar_kws={"label": metric_name},
         ax=axes[1],
+        square=True,
     )
     axes[1].set_title("LoRA", fontsize=12, fontweight="bold")
-    axes[1].set_ylabel("")
+    axes[1].set_xlabel("Doc Bucket")
+    axes[1].set_ylabel("Query Bucket")
     
     # Delta heatmap
     sns.heatmap(
-        np.array(delta_values).reshape(-1, 1),
-        annot=True,
-        fmt=".3f",
+        delta_matrix,
+        annot=annot,
+        fmt=fmt,
         cmap="RdYlGn",
         center=0,
-        vmin=delta_range[0],
-        vmax=delta_range[1],
-        cbar_kws={"label": "Δ (LoRA - Baseline)"},
-        yticklabels=common_scenarios,
-        xticklabels=["Δ"],
+        vmin=delta_vmin,
+        vmax=delta_vmax,
+        cbar_kws={"label": f"Δ ({metric_name})"},
         ax=axes[2],
+        square=True,
     )
-    axes[2].set_title("Improvement (Δ)", fontsize=12, fontweight="bold")
-    axes[2].set_ylabel("")
+    axes[2].set_title("Improvement (LoRA - Baseline)", fontsize=12, fontweight="bold")
+    axes[2].set_xlabel("Doc Bucket")
+    axes[2].set_ylabel("Query Bucket")
     
-    plt.suptitle(f"Performance Comparison: {metric}", fontsize=14, fontweight="bold", y=1.02)
+    # Overall title
+    plt.suptitle(
+        f"Cross-Period Retrieval Performance: {metric_name}",
+        fontsize=14,
+        fontweight="bold",
+        y=1.02,
+    )
+    
     plt.tight_layout()
     
-    if output_dir:
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / f"comparison_heatmaps_{metric}.png"
+    if output_path:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         plt.savefig(output_path, dpi=300, bbox_inches="tight")
-        logger.info(f"Saved comparison heatmaps to: {output_path}")
+        logger.info(f"✓ Saved heatmap panel to: {output_path}")
     else:
         plt.show()
     
     plt.close()
 
 
-def create_umap_visualization(
+def plot_umap_sample(
     embeddings_dict: Dict[str, np.ndarray],
     output_path: Optional[Path] = None,
     max_points: int = 10000,
     seed: int = 42,
     figsize: Tuple[int, int] = (12, 8),
 ) -> None:
-    """Create UMAP visualization of embeddings colored by bucket.
+    """Create UMAP visualization with sampled embeddings.
     
     Args:
         embeddings_dict: Dictionary mapping bucket name -> embeddings array.
         output_path: Path to save figure.
-        max_points: Maximum points to visualize (sampled if exceeded).
-        seed: Random seed for sampling.
+        max_points: Maximum total points to visualize.
+        seed: Random seed for reproducible sampling.
         figsize: Figure size.
     """
-    logger.info("Creating UMAP visualization...")
+    logger.info(f"Creating UMAP visualization (max {max_points} points)...")
     
-    # Collect all embeddings
+    # Collect all embeddings with sampling
     all_embeddings = []
     all_labels = []
-    bucket_names = []
+    bucket_names = sorted(embeddings_dict.keys())
     
     rng = np.random.RandomState(seed)
     
-    for bucket_name, embeddings in embeddings_dict.items():
+    # Calculate points per bucket
+    total_points = sum(len(emb) for emb in embeddings_dict.values())
+    points_per_bucket = min(max_points // len(bucket_names), total_points // len(bucket_names))
+    
+    for bucket_name in bucket_names:
+        embeddings = embeddings_dict[bucket_name]
         n_samples = len(embeddings)
         
-        # Sample if too many points
-        if n_samples > max_points // len(embeddings_dict):
-            sample_size = max_points // len(embeddings_dict)
-            indices = rng.choice(n_samples, size=sample_size, replace=False)
+        # Sample if necessary
+        if n_samples > points_per_bucket:
+            indices = rng.choice(n_samples, size=points_per_bucket, replace=False)
             sampled_embeddings = embeddings[indices]
         else:
             sampled_embeddings = embeddings
         
         all_embeddings.append(sampled_embeddings)
         all_labels.extend([bucket_name] * len(sampled_embeddings))
-        bucket_names.append(bucket_name)
         
-        logger.info(f"Bucket {bucket_name}: {len(sampled_embeddings)} points")
+        logger.info(f"  {bucket_name}: {len(sampled_embeddings)} points")
     
     # Concatenate
     all_embeddings = np.vstack(all_embeddings)
-    logger.info(f"Total points for UMAP: {len(all_embeddings)}")
+    logger.info(f"Total points: {len(all_embeddings)}")
     
     # Run UMAP
     logger.info("Running UMAP projection...")
-    umap_model = UMAP(n_components=2, random_state=seed, n_neighbors=15, min_dist=0.1)
+    umap_model = UMAP(
+        n_components=2,
+        random_state=seed,
+        n_neighbors=15,
+        min_dist=0.1,
+        metric="cosine",
+    )
     embedding_2d = umap_model.fit_transform(all_embeddings)
     
     # Plot
@@ -243,6 +194,7 @@ def create_umap_visualization(
     # Color palette
     colors = sns.color_palette("husl", len(bucket_names))
     
+    # Plot each bucket
     for i, bucket_name in enumerate(bucket_names):
         mask = np.array(all_labels) == bucket_name
         plt.scatter(
@@ -251,70 +203,112 @@ def create_umap_visualization(
             c=[colors[i]],
             label=bucket_name,
             alpha=0.6,
-            s=20,
-            edgecolors="none",
+            s=30,
+            edgecolors="white",
+            linewidth=0.5,
         )
     
-    plt.title("UMAP Projection of Embeddings", fontsize=14, fontweight="bold")
-    plt.xlabel("UMAP 1")
-    plt.ylabel("UMAP 2")
-    plt.legend(title="Time Bucket", loc="best", framealpha=0.9)
-    plt.grid(alpha=0.3)
+    plt.title(
+        f"UMAP Projection of Embeddings (n={len(all_embeddings):,}, seed={seed})",
+        fontsize=14,
+        fontweight="bold",
+    )
+    plt.xlabel("UMAP Dimension 1", fontsize=11)
+    plt.ylabel("UMAP Dimension 2", fontsize=11)
+    plt.legend(title="Time Bucket", loc="best", framealpha=0.95, edgecolor="black")
+    plt.grid(alpha=0.3, linestyle="--")
     plt.tight_layout()
     
     if output_path:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         plt.savefig(output_path, dpi=300, bbox_inches="tight")
-        logger.info(f"Saved UMAP to: {output_path}")
+        logger.info(f"✓ Saved UMAP to: {output_path}")
     else:
         plt.show()
     
     plt.close()
 
 
+def create_all_heatmaps(
+    results_dir: Path,
+    output_dir: Path,
+    baseline_mode: str = "baseline_frozen",
+    lora_mode: str = "lora",
+) -> None:
+    """Create heatmap panels for all metrics.
+    
+    Args:
+        results_dir: Directory containing evaluation result CSVs.
+        output_dir: Output directory for figures.
+        baseline_mode: Name of baseline mode.
+        lora_mode: Name of LoRA mode.
+    """
+    logger.info("Creating heatmap panels for all metrics...")
+    
+    metrics = {
+        "ndcg_at_10": "NDCG@10",
+        "recall_at_10": "Recall@10",
+        "recall_at_100": "Recall@100",
+        "mrr": "MRR",
+    }
+    
+    for metric_file, metric_display in metrics.items():
+        # Load baseline and LoRA matrices
+        baseline_path = results_dir / f"{baseline_mode}_{metric_file}.csv"
+        lora_path = results_dir / f"{lora_mode}_{metric_file}.csv"
+        
+        if not baseline_path.exists() or not lora_path.exists():
+            logger.warning(f"Missing results for {metric_file}, skipping...")
+            continue
+        
+        baseline_df = pd.read_csv(baseline_path, index_col=0)
+        lora_df = pd.read_csv(lora_path, index_col=0)
+        
+        # Create heatmap panel
+        output_path = output_dir / f"heatmap_panel_{metric_file}.png"
+        plot_heatmaps_panel(
+            baseline_matrix=baseline_df,
+            lora_matrix=lora_df,
+            metric_name=metric_display,
+            output_path=output_path,
+        )
+
+
 def visualize_results(
-    baseline_results_path: Optional[Path],
-    lora_results_path: Optional[Path],
+    results_dir: Path,
     embeddings_dir: Optional[Path],
     output_dir: Path,
+    baseline_mode: str = "baseline_frozen",
+    lora_mode: str = "lora",
 ) -> None:
     """Generate all visualization plots.
     
     Args:
-        baseline_results_path: Path to baseline results CSV.
-        lora_results_path: Path to LoRA results CSV.
+        results_dir: Directory with evaluation result CSVs.
         embeddings_dir: Directory with cached embeddings for UMAP.
         output_dir: Output directory for figures.
+        baseline_mode: Name of baseline mode.
+        lora_mode: Name of LoRA mode.
     """
+    logger.info("\n" + "="*60)
+    logger.info("GENERATING VISUALIZATIONS")
+    logger.info("="*60)
+    
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Load results
-    baseline_df = None
-    lora_df = None
+    # Create heatmap panels
+    create_all_heatmaps(
+        results_dir=results_dir,
+        output_dir=output_dir,
+        baseline_mode=baseline_mode,
+        lora_mode=lora_mode,
+    )
     
-    if baseline_results_path and baseline_results_path.exists():
-        baseline_df = pd.read_csv(baseline_results_path, index_col=0)
-        logger.info(f"Loaded baseline results: {baseline_results_path}")
-    
-    if lora_results_path and lora_results_path.exists():
-        lora_df = pd.read_csv(lora_results_path, index_col=0)
-        logger.info(f"Loaded LoRA results: {lora_results_path}")
-    
-    # Create comparison heatmaps if both available
-    if baseline_df is not None and lora_df is not None:
-        for metric in ["ndcg@10", "recall@10", "recall@100", "mrr"]:
-            if metric in baseline_df.columns and metric in lora_df.columns:
-                create_comparison_heatmaps(
-                    baseline_df,
-                    lora_df,
-                    metric=metric,
-                    output_dir=output_dir,
-                )
-    
-    # Create UMAP visualization if embeddings available
+    # Create UMAP visualization
     if embeddings_dir and embeddings_dir.exists():
         from ..eval.encoder import load_embeddings
         
-        # Load embeddings for each bucket
+        logger.info("\nLoading embeddings for UMAP...")
         embeddings_dict = {}
         
         for bucket_dir in embeddings_dir.iterdir():
@@ -328,7 +322,13 @@ def visualize_results(
             if test_dir.exists():
                 embeddings, _ = load_embeddings(test_dir)
                 embeddings_dict[bucket_name] = embeddings
+                logger.info(f"  Loaded {bucket_name}: {len(embeddings)} embeddings")
         
         if embeddings_dict:
             umap_path = output_dir / "umap_embeddings.png"
-            create_umap_visualization(embeddings_dict, output_path=umap_path)
+            plot_umap_sample(embeddings_dict, output_path=umap_path)
+        else:
+            logger.warning("No embeddings found for UMAP")
+    
+    logger.info("\n✓ Visualization complete!")
+    logger.info("="*60)
