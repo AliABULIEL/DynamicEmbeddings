@@ -6,7 +6,7 @@ peft==0.7.1
 datasets==2.15.0
 
 # Vector search
-faiss-cpu==1.7.4
+faiss-cpu==1.8.0
 
 # CLI & config
 typer[all]==0.9.0
