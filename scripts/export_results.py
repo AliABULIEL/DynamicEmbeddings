@@ -1,223 +1,304 @@
 #!/usr/bin/env python3
-"""Export deliverables: collect results, figures, and repro info.
-
-This script consolidates:
-- CSV result files (baseline and LoRA)
-- PNG visualizations
-- Environment/reproducibility info
-- A summary README with top-line numbers
-"""
+"""Export results, figures, and reproducibility info to deliverables/."""
 
 import json
 import shutil
-from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
 
-import pandas as pd
+from temporal_lora.utils.logging import get_logger
+from temporal_lora.utils.env import dump_environment
+
+logger = get_logger(__name__)
+
+# Project paths
+PROJECT_ROOT = Path(__file__).parent.parent
+DELIVERABLES_DIR = PROJECT_ROOT / "deliverables"
+RESULTS_DIR = DELIVERABLES_DIR / "results"
+FIGURES_DIR = DELIVERABLES_DIR / "figures"
+REPRO_DIR = DELIVERABLES_DIR / "repro"
 
 
-def get_top_metrics(results_path: Path) -> Optional[Dict[str, float]]:
-    """Extract top-line metrics from results CSV.
+def create_deliverables_structure():
+    """Create deliverables directory structure."""
+    logger.info("Creating deliverables structure...")
     
-    Args:
-        results_path: Path to results CSV file.
+    DELIVERABLES_DIR.mkdir(exist_ok=True)
+    RESULTS_DIR.mkdir(exist_ok=True)
+    FIGURES_DIR.mkdir(exist_ok=True)
+    REPRO_DIR.mkdir(exist_ok=True)
+    
+    logger.info(f"✓ Structure created at: {DELIVERABLES_DIR}")
+
+
+def collect_results():
+    """Collect result CSVs from various locations."""
+    logger.info("Collecting results...")
+    
+    # Paths to check
+    source_dirs = [
+        PROJECT_ROOT / "deliverables" / "results",
+        PROJECT_ROOT / "results",
+    ]
+    
+    # Patterns to collect
+    patterns = [
+        "**/baseline_frozen_*.csv",
+        "**/lora_*.csv",
+        "**/full_ft_*.csv",
+        "**/seq_ft_*.csv",
+        "**/delta_*.csv",
+        "**/efficiency_summary.csv",
+        "**/temperature_sweep.csv",
+    ]
+    
+    collected = []
+    for source_dir in source_dirs:
+        if not source_dir.exists():
+            continue
         
-    Returns:
-        Dictionary with metric names and values, or None if file doesn't exist.
-    """
-    if not results_path.exists():
-        return None
+        for pattern in patterns:
+            for csv_file in source_dir.glob(pattern):
+                if "deliverables/results" not in str(csv_file):
+                    # Copy to deliverables
+                    dest = RESULTS_DIR / csv_file.name
+                    shutil.copy(csv_file, dest)
+                    collected.append(dest.name)
+                    logger.info(f"  ✓ Collected: {csv_file.name}")
     
-    df = pd.read_csv(results_path, index_col=0)
+    if not collected:
+        logger.warning("No result files found to collect")
     
-    # Get mean across all scenarios for key metrics
-    metrics = {}
-    for metric in ["ndcg@10", "recall@10", "recall@100", "mrr"]:
-        if metric in df.columns:
-            metrics[metric] = float(df[metric].mean())
-    
-    return metrics
+    return collected
 
 
-def create_results_readme(
-    deliverables_dir: Path,
-    baseline_metrics: Optional[Dict[str, float]],
-    lora_metrics: Optional[Dict[str, float]],
-) -> None:
-    """Create README with top-line numbers.
+def collect_figures():
+    """Collect visualizations."""
+    logger.info("Collecting figures...")
     
-    Args:
-        deliverables_dir: Deliverables directory path.
-        baseline_metrics: Baseline metrics dictionary.
-        lora_metrics: LoRA metrics dictionary.
-    """
-    readme_path = deliverables_dir / "README_results.md"
+    # Paths to check
+    source_dirs = [
+        PROJECT_ROOT / "deliverables" / "figures",
+        PROJECT_ROOT / "figures",
+        PROJECT_ROOT / "plots",
+    ]
     
+    # Patterns to collect
+    patterns = [
+        "**/*.png",
+        "**/*.pdf",
+        "**/*.svg",
+    ]
+    
+    collected = []
+    for source_dir in source_dirs:
+        if not source_dir.exists():
+            continue
+        
+        for pattern in patterns:
+            for fig_file in source_dir.glob(pattern):
+                if "deliverables/figures" not in str(fig_file):
+                    # Copy to deliverables
+                    dest = FIGURES_DIR / fig_file.name
+                    shutil.copy(fig_file, dest)
+                    collected.append(dest.name)
+                    logger.info(f"  ✓ Collected: {fig_file.name}")
+    
+    if not collected:
+        logger.warning("No figure files found to collect")
+    
+    return collected
+
+
+def create_summary_readme(result_files, figure_files):
+    """Create README summarizing deliverables."""
+    logger.info("Creating summary README...")
+    
+    readme_content = """# Temporal LoRA Evaluation Results
+
+This directory contains the complete evaluation results, visualizations, and reproducibility information for the Temporal LoRA project.
+
+## Directory Structure
+
+```
+deliverables/
+├── results/          # Evaluation metrics and comparisons
+├── figures/          # Visualizations (heatmaps, UMAP plots)
+├── repro/            # Reproducibility information
+└── README_results.md # This file
+```
+
+## Results Files
+
+"""
+    
+    # Add result files
+    if result_files:
+        readme_content += "### Evaluation Metrics\n\n"
+        
+        # Group files
+        baseline_files = [f for f in result_files if "baseline" in f]
+        lora_files = [f for f in result_files if "lora" in f and "baseline" not in f]
+        full_ft_files = [f for f in result_files if "full_ft" in f]
+        seq_ft_files = [f for f in result_files if "seq_ft" in f]
+        delta_files = [f for f in result_files if "delta" in f]
+        other_files = [f for f in result_files if f not in baseline_files + lora_files + full_ft_files + seq_ft_files + delta_files]
+        
+        if baseline_files:
+            readme_content += "**Baseline (Frozen Encoder):**\n"
+            for f in sorted(baseline_files):
+                readme_content += f"- `{f}`\n"
+            readme_content += "\n"
+        
+        if lora_files:
+            readme_content += "**LoRA Adapters:**\n"
+            for f in sorted(lora_files):
+                readme_content += f"- `{f}`\n"
+            readme_content += "\n"
+        
+        if full_ft_files:
+            readme_content += "**Full Fine-Tuning:**\n"
+            for f in sorted(full_ft_files):
+                readme_content += f"- `{f}`\n"
+            readme_content += "\n"
+        
+        if seq_ft_files:
+            readme_content += "**Sequential Fine-Tuning:**\n"
+            for f in sorted(seq_ft_files):
+                readme_content += f"- `{f}`\n"
+            readme_content += "\n"
+        
+        if delta_files:
+            readme_content += "**Comparisons (LoRA - Baseline):**\n"
+            for f in sorted(delta_files):
+                readme_content += f"- `{f}`\n"
+            readme_content += "\n"
+        
+        if other_files:
+            readme_content += "**Other Results:**\n"
+            for f in sorted(other_files):
+                readme_content += f"- `{f}`\n"
+            readme_content += "\n"
+    
+    # Add figure files
+    if figure_files:
+        readme_content += "## Visualizations\n\n"
+        
+        heatmap_files = [f for f in figure_files if "heatmap" in f.lower()]
+        umap_files = [f for f in figure_files if "umap" in f.lower()]
+        other_figs = [f for f in figure_files if f not in heatmap_files + umap_files]
+        
+        if heatmap_files:
+            readme_content += "**Heatmaps (Query Bucket × Doc Bucket):**\n"
+            for f in sorted(heatmap_files):
+                readme_content += f"- `{f}`\n"
+            readme_content += "\n"
+        
+        if umap_files:
+            readme_content += "**UMAP Embeddings:**\n"
+            for f in sorted(umap_files):
+                readme_content += f"- `{f}`\n"
+            readme_content += "\n"
+        
+        if other_figs:
+            readme_content += "**Other Figures:**\n"
+            for f in sorted(other_figs):
+                readme_content += f"- `{f}`\n"
+            readme_content += "\n"
+    
+    # Add metrics explanation
+    readme_content += """## Metrics
+
+All results include the following metrics:
+
+- **NDCG@10**: Normalized Discounted Cumulative Gain at position 10
+- **Recall@10**: Fraction of relevant documents in top 10
+- **Recall@100**: Fraction of relevant documents in top 100
+- **MRR**: Mean Reciprocal Rank
+
+## Evaluation Modes
+
+Results are organized by training mode:
+
+1. **baseline_frozen**: Static frozen encoder (no time adaptation)
+2. **lora**: LoRA adapters per time bucket (main contribution)
+3. **full_ft**: Full fine-tuning per bucket (upper bound)
+4. **seq_ft**: Sequential fine-tuning (catastrophic forgetting demo)
+
+## Matrix Structure
+
+Each CSV file with `_ndcg_at_10.csv`, `_recall_at_10.csv`, etc. contains a query bucket × doc bucket matrix:
+
+- **Rows**: Query time buckets
+- **Columns**: Document time buckets
+- **Diagonal**: Within-period retrieval
+- **Off-diagonal**: Cross-period retrieval
+
+## Key Findings
+
+Look for:
+
+1. **Delta matrices** show LoRA improvements over baseline
+2. **Temperature sweep** results identify optimal merge settings
+3. **Efficiency summary** compares parameter counts and training times
+4. **Diagonal vs off-diagonal** patterns reveal temporal adaptation
+
+## Reproducibility
+
+See `repro/` directory for:
+- Environment snapshot (packages, CUDA)
+- Git commit SHA
+- Configuration files
+
+---
+
+*Generated by export_results.py*
+"""
+    
+    readme_path = DELIVERABLES_DIR / "README_results.md"
     with open(readme_path, "w") as f:
-        f.write("# Temporal LoRA for Dynamic Sentence Embeddings - Results\n\n")
-        f.write(f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-        f.write("---\n\n")
-        
-        # Top-line summary
-        f.write("## Top-Line Results\n\n")
-        
-        if baseline_metrics and lora_metrics:
-            f.write("| Metric | Baseline | LoRA | Δ Improvement | % Improvement |\n")
-            f.write("|--------|----------|------|---------------|---------------|\n")
-            
-            for metric in ["ndcg@10", "recall@10", "recall@100", "mrr"]:
-                if metric in baseline_metrics and metric in lora_metrics:
-                    baseline = baseline_metrics[metric]
-                    lora = lora_metrics[metric]
-                    delta = lora - baseline
-                    pct = (delta / baseline * 100) if baseline > 0 else 0
-                    
-                    f.write(
-                        f"| {metric.upper()} | {baseline:.4f} | {lora:.4f} | "
-                        f"{delta:+.4f} | {pct:+.2f}% |\n"
-                    )
-        elif lora_metrics:
-            f.write("**LoRA Results (mean across scenarios):**\n\n")
-            for metric, value in lora_metrics.items():
-                f.write(f"- **{metric.upper()}**: {value:.4f}\n")
-        elif baseline_metrics:
-            f.write("**Baseline Results (mean across scenarios):**\n\n")
-            for metric, value in baseline_metrics.items():
-                f.write(f"- **{metric.upper()}**: {value:.4f}\n")
-        else:
-            f.write("*No results found. Run evaluation first.*\n")
-        
-        f.write("\n---\n\n")
-        
-        # File inventory
-        f.write("## Files in This Directory\n\n")
-        
-        f.write("### Results\n")
-        f.write("- `results/baseline_results.csv` - Baseline retrieval metrics\n")
-        f.write("- `results/lora_results.csv` - LoRA retrieval metrics\n\n")
-        
-        f.write("### Visualizations\n")
-        f.write("- `figures/comparison_heatmaps_*.png` - Performance comparison heatmaps\n")
-        f.write("- `figures/umap_embeddings.png` - UMAP projection of embeddings\n\n")
-        
-        f.write("### Reproducibility\n")
-        f.write("- `repro/environment.json` - System info, CUDA, packages, git SHA\n\n")
-        
-        f.write("---\n\n")
-        
-        # Methodology
-        f.write("## Methodology\n\n")
-        f.write("### Model Architecture\n")
-        f.write("- **Base Model**: `sentence-transformers/all-MiniLM-L6-v2` (frozen)\n")
-        f.write("- **Adaptation**: Time-bucket LoRA on attention Q/K/V layers\n")
-        f.write("- **Time Buckets**: ≤2018, 2019–2024\n\n")
-        
-        f.write("### Evaluation\n")
-        f.write("- **Metrics**: NDCG@10, Recall@10/100, MRR\n")
-        f.write("- **Modes**: Time-select and multi-index retrieval\n")
-        f.write("- **Scenarios**: Within-period, cross-period, and all queries\n\n")
-        
-        f.write("### Training\n")
-        f.write("- **Epochs**: 2-3 with early stopping\n")
-        f.write("- **Precision**: FP16 (when CUDA available)\n")
-        f.write("- **Negatives**: Cross-period-biased sampling\n\n")
-        
-        f.write("---\n\n")
-        f.write("For more details, see project documentation.\n")
+        f.write(readme_content)
     
-    print(f"✓ Created {readme_path}")
+    logger.info(f"✓ README created: {readme_path}")
 
 
-def export_deliverables(
-    project_root: Path,
-    deliverables_dir: Path,
-) -> None:
-    """Export all deliverables to consolidated directory.
+def export_environment():
+    """Export reproducibility information."""
+    logger.info("Exporting environment info...")
     
-    Args:
-        project_root: Project root path.
-        deliverables_dir: Output deliverables directory.
-    """
-    print("=" * 60)
-    print("EXPORTING DELIVERABLES")
-    print("=" * 60)
+    dump_environment(REPRO_DIR, repo_path=PROJECT_ROOT)
     
-    # Create deliverables structure
-    results_dir = deliverables_dir / "results"
-    figures_dir = deliverables_dir / "figures"
-    repro_dir = deliverables_dir / "repro"
-    
-    for d in [results_dir, figures_dir, repro_dir]:
-        d.mkdir(parents=True, exist_ok=True)
-    
-    # Copy results CSVs
-    print("\n📊 Copying results...")
-    source_results = project_root / "deliverables" / "results"
-    if source_results.exists():
-        for csv_file in source_results.glob("*.csv"):
-            dest = results_dir / csv_file.name
-            shutil.copy2(csv_file, dest)
-            print(f"  ✓ {csv_file.name}")
-    else:
-        print("  ⚠ No results found (run evaluation first)")
-    
-    # Copy figures
-    print("\n🎨 Copying figures...")
-    source_figures = project_root / "deliverables" / "figures"
-    if source_figures.exists():
-        for fig_file in source_figures.glob("*.png"):
-            dest = figures_dir / fig_file.name
-            shutil.copy2(fig_file, dest)
-            print(f"  ✓ {fig_file.name}")
-    else:
-        print("  ⚠ No figures found (run visualize first)")
-    
-    # Copy repro info
-    print("\n🔄 Copying reproducibility info...")
-    source_repro = project_root / "deliverables" / "repro"
-    if source_repro.exists():
-        for repro_file in source_repro.glob("*"):
-            if repro_file.is_file():
-                dest = repro_dir / repro_file.name
-                shutil.copy2(repro_file, dest)
-                print(f"  ✓ {repro_file.name}")
-    else:
-        print("  ⚠ No repro info found (run env-dump first)")
-    
-    # Load metrics for README
-    baseline_metrics = get_top_metrics(results_dir / "baseline_results.csv")
-    lora_metrics = get_top_metrics(results_dir / "lora_results.csv")
-    
-    # Create README with top-line numbers
-    print("\n📝 Creating summary README...")
-    create_results_readme(deliverables_dir, baseline_metrics, lora_metrics)
-    
-    # Summary
-    print("\n" + "=" * 60)
-    print("EXPORT COMPLETE")
-    print("=" * 60)
-    print(f"\nAll deliverables exported to: {deliverables_dir}")
-    print("\nContents:")
-    print(f"  - results/     ({len(list(results_dir.glob('*.csv')))} CSV files)")
-    print(f"  - figures/     ({len(list(figures_dir.glob('*.png')))} PNG files)")
-    print(f"  - repro/       ({len(list(repro_dir.glob('*')))} files)")
-    print(f"  - README_results.md")
+    logger.info(f"✓ Environment exported to: {REPRO_DIR}")
 
 
 def main():
-    """Main entry point."""
-    import sys
+    """Run export process."""
+    logger.info("\n" + "=" * 80)
+    logger.info("EXPORTING DELIVERABLES")
+    logger.info("=" * 80 + "\n")
     
-    # Get project root (assumes script is in scripts/)
-    script_path = Path(__file__).resolve()
-    project_root = script_path.parent.parent
-    deliverables_dir = project_root / "deliverables"
+    # Create structure
+    create_deliverables_structure()
     
-    print(f"Project root: {project_root}")
-    print(f"Deliverables: {deliverables_dir}\n")
+    # Collect files
+    result_files = collect_results()
+    figure_files = collect_figures()
     
-    export_deliverables(project_root, deliverables_dir)
+    # Create summary
+    create_summary_readme(result_files, figure_files)
+    
+    # Export environment
+    export_environment()
+    
+    # Summary
+    logger.info("\n" + "=" * 80)
+    logger.info("EXPORT SUMMARY")
+    logger.info("=" * 80)
+    logger.info(f"Results collected: {len(result_files)}")
+    logger.info(f"Figures collected: {len(figure_files)}")
+    logger.info(f"Output directory: {DELIVERABLES_DIR}")
+    logger.info("=" * 80)
+    
+    logger.info("\n✓ Export complete!")
 
 
 if __name__ == "__main__":
