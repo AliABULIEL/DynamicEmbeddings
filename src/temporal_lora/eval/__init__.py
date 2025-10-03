@@ -24,10 +24,13 @@ from .metrics import (
     permutation_test,
 )
 from .evaluate import (
-    evaluate_within_period,
-    evaluate_cross_period,
-    evaluate_multi_index,
-    run_evaluation,
+    evaluate_bucket_pair,
+    evaluate_cross_bucket_matrix,
+    evaluate_multi_index_with_temperature,
+    evaluate_mode,
+    run_temperature_sweep,
+    run_full_evaluation,
+    compare_modes,
 )
 
 __all__ = [
@@ -52,8 +55,11 @@ __all__ = [
     "bootstrap_confidence_interval",
     "permutation_test",
     # evaluate
-    "evaluate_within_period",
-    "evaluate_cross_period",
-    "evaluate_multi_index",
-    "run_evaluation",
+    "evaluate_bucket_pair",
+    "evaluate_cross_bucket_matrix",
+    "evaluate_multi_index_with_temperature",
+    "evaluate_mode",
+    "run_temperature_sweep",
+    "run_full_evaluation",
+    "compare_modes",
 ]
