@@ -17,6 +17,7 @@ dependencies = [
     "sentence-transformers>=3.0.0",
     "transformers>=4.35.0",
     "huggingface_hub>=0.20.0",
+    "accelerate>=0.26.0",
     "peft>=0.7.0",
     "datasets>=2.15.0",
     "faiss-cpu>=1.7.4",
