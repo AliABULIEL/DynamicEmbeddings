@@ -53,16 +53,20 @@ class TestFAISSRoundtrip:
     
     def test_build_and_query_index(self):
         """Test building index and querying."""
-        # Create dummy embeddings
+        # Create dummy embeddings with explicit contiguous array
         np.random.seed(42)
         embeddings = np.random.randn(100, 64).astype(np.float32)
-        embeddings = embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)
+        # Normalize
+        norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+        embeddings = embeddings / norms
+        # Ensure contiguous
+        embeddings = np.ascontiguousarray(embeddings)
         
         # Build index
         index = build_faiss_index(embeddings)
         
-        # Query with same embeddings
-        query_embeddings = embeddings[:10]
+        # Query with same embeddings (ensure contiguous slice)
+        query_embeddings = np.ascontiguousarray(embeddings[:10])
         scores, indices = query_index(index, query_embeddings, k=5)
         
         # Check shapes
