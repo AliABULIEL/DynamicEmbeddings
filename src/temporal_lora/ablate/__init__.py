@@ -1,4 +1,4 @@
-"""Ablation utilities."""
+"""Ablation study utilities."""
 
 from .quick import run_quick_ablation
 

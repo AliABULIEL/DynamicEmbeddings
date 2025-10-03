@@ -432,17 +432,20 @@ def efficiency_summary(
 
 @app.command()
 def visualize(
-    baseline_results: Optional[str] = typer.Option(
-        None, help="Path to baseline results CSV"
-    ),
-    lora_results: Optional[str] = typer.Option(
-        None, help="Path to LoRA results CSV"
+    results_dir: Optional[str] = typer.Option(
+        None, help="Directory with evaluation results"
     ),
     embeddings_dir: Optional[str] = typer.Option(
         None, help="Path to embeddings directory for UMAP"
     ),
     output_dir: Optional[str] = typer.Option(
         None, help="Output directory for figures"
+    ),
+    baseline_mode: str = typer.Option(
+        "baseline_frozen", help="Name of baseline mode"
+    ),
+    lora_mode: str = typer.Option(
+        "lora", help="Name of LoRA mode"
     ),
 ) -> None:
     """Generate heatmaps and UMAP visualizations."""
@@ -451,25 +454,126 @@ def visualize(
     ensure_dirs()
     
     # Default paths
-    baseline_path = Path(baseline_results) if baseline_results else DELIVERABLES_RESULTS_DIR / "baseline_results.csv"
-    lora_path = Path(lora_results) if lora_results else DELIVERABLES_RESULTS_DIR / "lora_results.csv"
-    emb_dir = Path(embeddings_dir) if embeddings_dir else PROJECT_ROOT / "models" / "embeddings_lora"
+    results_path = Path(results_dir) if results_dir else DELIVERABLES_RESULTS_DIR
+    emb_dir = Path(embeddings_dir) if embeddings_dir else PROJECT_ROOT / ".cache" / "embeddings" / lora_mode
     output_path = Path(output_dir) if output_dir else PROJECT_ROOT / "deliverables" / "figures"
     
     typer.echo("Generating visualizations...")
-    typer.echo(f"Baseline results: {baseline_path}")
-    typer.echo(f"LoRA results: {lora_path}")
+    typer.echo(f"Results directory: {results_path}")
     typer.echo(f"Embeddings: {emb_dir}")
     typer.echo(f"Output: {output_path}")
     
     visualize_results(
-        baseline_results_path=baseline_path,
-        lora_results_path=lora_path,
+        results_dir=results_path,
         embeddings_dir=emb_dir,
         output_dir=output_path,
+        baseline_mode=baseline_mode,
+        lora_mode=lora_mode,
     )
     
     typer.echo(f"\n✓ Visualizations saved to: {output_path}")
+
+
+@app.command()
+def drift_trajectories(
+    terms: str = typer.Option(
+        "transformer,BERT,LLM",
+        help="Comma-separated terms to track"
+    ),
+    contexts_per_term: int = typer.Option(
+        50, help="Number of contexts per term per bucket"
+    ),
+    data_dir: Optional[str] = typer.Option(None, help="Data directory"),
+    adapters_dir: Optional[str] = typer.Option(None, help="LoRA adapters directory"),
+    output_dir: Optional[str] = typer.Option(None, help="Output directory"),
+    use_lora: bool = typer.Option(True, "--lora/--baseline", help="Use LoRA adapters"),
+) -> None:
+    """Generate term drift trajectory visualization."""
+    from .viz.drift_trajectories import run_drift_analysis
+    
+    ensure_dirs()
+    
+    # Load configs
+    data_config = load_config("data", CONFIG_DIR)
+    model_config = load_config("model", CONFIG_DIR)
+    
+    # Parse inputs
+    term_list = [t.strip() for t in terms.split(",")]
+    buckets = [b["name"] for b in data_config["buckets"]]
+    base_model = model_config["base_model"]["name"]
+    
+    # Set paths
+    data_path = Path(data_dir) if data_dir else DATA_PROCESSED_DIR
+    adapters_path = Path(adapters_dir) if adapters_dir else ADAPTERS_DIR
+    output_path = Path(output_dir) if output_dir else PROJECT_ROOT / "deliverables" / "figures"
+    
+    typer.echo("Generating drift trajectories...")
+    typer.echo(f"  Terms: {', '.join(term_list)}")
+    typer.echo(f"  Buckets: {', '.join(buckets)}")
+    typer.echo(f"  Contexts per term: {contexts_per_term}")
+    typer.echo(f"  Use LoRA: {use_lora}")
+    
+    run_drift_analysis(
+        data_dir=data_path,
+        adapters_dir=adapters_path,
+        base_model_name=base_model,
+        buckets=buckets,
+        terms=term_list,
+        output_dir=output_path,
+        contexts_per_term=contexts_per_term,
+        use_lora=use_lora,
+    )
+    
+    typer.echo(f"\n✓ Drift trajectories saved to: {output_path}")
+
+
+@app.command()
+def quick_ablation(
+    bucket: Optional[str] = typer.Option(None, help="Bucket to use for ablation"),
+    ranks: str = typer.Option("8,16,32", help="Comma-separated LoRA ranks"),
+    max_eval: int = typer.Option(500, help="Max eval samples"),
+    epochs: int = typer.Option(1, help="Training epochs"),
+    data_dir: Optional[str] = typer.Option(None, help="Data directory"),
+    output: Optional[str] = typer.Option(None, help="Output CSV path"),
+) -> None:
+    """Run quick ablation study on LoRA hyperparameters."""
+    from .ablate.quick import run_quick_ablation
+    
+    ensure_dirs()
+    
+    # Load configs
+    data_config = load_config("data", CONFIG_DIR)
+    model_config = load_config("model", CONFIG_DIR)
+    
+    # Parse inputs
+    rank_list = [int(r.strip()) for r in ranks.split(",")]
+    buckets = [b["name"] for b in data_config["buckets"]]
+    bucket_name = bucket if bucket else buckets[0]
+    base_model = model_config["base_model"]["name"]
+    
+    # Set paths
+    data_path = Path(data_dir) if data_dir else DATA_PROCESSED_DIR
+    output_path = Path(output) if output else DELIVERABLES_RESULTS_DIR / "quick_ablation.csv"
+    
+    typer.echo("Running quick ablation...")
+    typer.echo(f"  Bucket: {bucket_name}")
+    typer.echo(f"  Ranks: {rank_list}")
+    typer.echo(f"  Epochs: {epochs}")
+    typer.echo(f"  Max eval: {max_eval}")
+    
+    # Run ablation
+    results_df = run_quick_ablation(
+        data_dir=data_path,
+        base_model_name=base_model,
+        bucket_name=bucket_name,
+        output_path=output_path,
+        ranks=rank_list,
+        epochs=epochs,
+        max_eval_samples=max_eval,
+    )
+    
+    typer.echo(f"\n✓ Ablation results saved to: {output_path}")
+    typer.echo(f"✓ Summary saved to: {output_path.parent / 'ablation_summary.md'}")
 
 
 @app.command()
