@@ -1,5 +1,5 @@
 # Core ML/NLP
-torch==2.1.0
+torch==2.2.1
 sentence-transformers==2.2.2
 transformers==4.35.2
 peft==0.7.1
