@@ -232,3 +232,51 @@ def permutation_test(
     p_value = np.mean(np.abs(perm_diffs) >= np.abs(observed_diff))
     
     return p_value
+
+
+# Convenience aliases for benchmark module
+def calculate_ndcg(relevance_lists: List[List[float]], k: int = 10) -> float:
+    """Calculate average NDCG@k across queries.
+    
+    Args:
+        relevance_lists: List of relevance lists (one per query)
+        k: Cutoff position
+        
+    Returns:
+        Average NDCG@k
+    """
+    if not relevance_lists:
+        return 0.0
+    scores = [ndcg_at_k(np.array(rel), k=k) for rel in relevance_lists]
+    return np.mean(scores)
+
+
+def calculate_recall(relevance_lists: List[List[float]], k: int = 10) -> float:
+    """Calculate average Recall@k across queries.
+    
+    Args:
+        relevance_lists: List of relevance lists (one per query)
+        k: Cutoff position
+        
+    Returns:
+        Average Recall@k
+    """
+    if not relevance_lists:
+        return 0.0
+    scores = [recall_at_k(np.array(rel), k=k) for rel in relevance_lists]
+    return np.mean(scores)
+
+
+def calculate_mrr(relevance_lists: List[List[float]]) -> float:
+    """Calculate average MRR across queries.
+    
+    Args:
+        relevance_lists: List of relevance lists (one per query)
+        
+    Returns:
+        Average MRR
+    """
+    if not relevance_lists:
+        return 0.0
+    scores = [mean_reciprocal_rank(np.array(rel)) for rel in relevance_lists]
+    return np.mean(scores)

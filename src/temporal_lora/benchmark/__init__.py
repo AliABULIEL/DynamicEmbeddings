@@ -24,7 +24,6 @@ from tqdm import tqdm
 from ..eval.encoder import TimeAwareSentenceEncoder
 from ..eval.retrieval import FAISSRetriever
 from ..eval.metrics import calculate_ndcg, calculate_recall, calculate_mrr
-from ..data.loader import load_arxiv_data
 
 logger = logging.getLogger(__name__)
 
