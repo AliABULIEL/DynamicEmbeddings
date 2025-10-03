@@ -603,6 +603,81 @@ def export_deliverables() -> None:
     typer.echo("\n✓ Deliverables exported successfully")
 
 
+@app.command()
+def benchmark(
+    baseline_models: Optional[str] = typer.Option(
+        "sentence-transformers/all-MiniLM-L6-v2,sentence-transformers/all-mpnet-base-v2",
+        help="Comma-separated list of baseline models to compare"
+    ),
+    lora_adapters_dir: Optional[str] = typer.Option(
+        None,
+        help="Path to trained LoRA adapters directory"
+    ),
+    buckets: Optional[str] = typer.Option(
+        None,
+        help="Comma-separated list of buckets to evaluate (e.g., 'bucket_0,bucket_1')"
+    ),
+    output_dir: Optional[str] = typer.Option(
+        None,
+        help="Output directory for benchmark results"
+    ),
+    generate_report: bool = typer.Option(
+        True,
+        "--report/--no-report",
+        help="Generate comprehensive report"
+    ),
+) -> None:
+    """Run comprehensive benchmark comparison against baseline models."""
+    from .benchmark import run_benchmark
+    from .benchmark.report_generator import generate_report as gen_report
+    
+    ensure_dirs()
+    
+    # Parse baseline models
+    baseline_list = baseline_models.split(",") if baseline_models else None
+    
+    # Parse buckets
+    bucket_list = buckets.split(",") if buckets else None
+    
+    # Set paths
+    lora_path = Path(lora_adapters_dir) if lora_adapters_dir else ADAPTERS_DIR
+    output_path = Path(output_dir) if output_dir else DELIVERABLES_RESULTS_DIR / "benchmark"
+    
+    typer.echo("\n" + "="*60)
+    typer.echo("Starting Benchmark Comparison")
+    typer.echo("="*60)
+    typer.echo(f"Baseline models: {baseline_list}")
+    typer.echo(f"LoRA adapters: {lora_path}")
+    typer.echo(f"Buckets: {bucket_list or 'all'}")
+    typer.echo(f"Output: {output_path}")
+    typer.echo("="*60 + "\n")
+    
+    # Run benchmark
+    df = run_benchmark(
+        data_dir=DATA_PROCESSED_DIR,
+        output_dir=output_path,
+        lora_adapters_dir=lora_path if lora_path.exists() else None,
+        buckets=bucket_list,
+    )
+    
+    typer.echo(f"\n✅ Benchmark results saved to: {output_path / 'benchmark_comparison.csv'}")
+    
+    # Generate report
+    if generate_report:
+        typer.echo("\n📝 Generating comprehensive report...")
+        report_path = gen_report(
+            results_csv=output_path / "benchmark_comparison.csv",
+            output_dir=output_path,
+            baseline=baseline_list[0].split("/")[-1] if baseline_list else "all-MiniLM-L6-v2"
+        )
+        typer.echo(f"✅ Report generated: {report_path}")
+        typer.echo(f"✅ Visualizations saved to: {output_path / 'figures'}")
+    
+    typer.echo("\n" + "="*60)
+    typer.echo("Benchmark Complete!")
+    typer.echo("="*60)
+
+
 def main() -> None:
     """Entry point for CLI."""
     app()
