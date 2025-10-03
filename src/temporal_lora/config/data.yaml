@@ -1,6 +1,6 @@
 # Data configuration
 dataset:
-  name: "arxiv_cs_ml"  # HuggingFace dataset or CSV path
+  name: "arxiv_data"  # HuggingFace dataset or CSV path (looks for arxiv_data.csv)
   text_field: "abstract"
   title_field: "title"
   id_field: "paper_id"
