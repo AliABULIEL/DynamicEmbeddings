@@ -175,3 +175,68 @@ def encode_and_cache_bucket(
         output_paths[split] = split_output_dir
     
     return output_paths
+
+
+class TimeAwareSentenceEncoder:
+    """Encoder that uses different LoRA adapters per time bucket."""
+    
+    def __init__(self, base_model: str, adapters_dir: Path):
+        """Initialize time-aware encoder.
+        
+        Args:
+            base_model: Base model name
+            adapters_dir: Directory containing LoRA adapters per bucket
+        """
+        self.base_model_name = base_model
+        self.adapters_dir = Path(adapters_dir)
+        self.models = {}
+        
+        # Load all available adapters
+        if self.adapters_dir.exists():
+            for adapter_path in self.adapters_dir.iterdir():
+                if adapter_path.is_dir():
+                    bucket_name = adapter_path.name
+                    logger.info(f"Loading adapter for bucket: {bucket_name}")
+                    self.models[bucket_name] = load_lora_adapter(
+                        base_model, adapter_path
+                    )
+        
+        # Also load base model as fallback
+        self.base_model = SentenceTransformer(base_model)
+        
+        logger.info(f"Loaded {len(self.models)} adapters")
+    
+    def encode(
+        self,
+        texts: List[str],
+        time_bucket: Optional[str] = None,
+        batch_size: int = 32,
+        show_progress_bar: bool = False,
+    ) -> np.ndarray:
+        """Encode texts with appropriate time-aware model.
+        
+        Args:
+            texts: Texts to encode
+            time_bucket: Time bucket to use (None = base model)
+            batch_size: Batch size
+            show_progress_bar: Show progress
+            
+        Returns:
+            Embeddings array
+        """
+        # Select model
+        if time_bucket and time_bucket in self.models:
+            model = self.models[time_bucket]
+        else:
+            model = self.base_model
+        
+        # Encode
+        embeddings = model.encode(
+            texts,
+            batch_size=batch_size,
+            show_progress_bar=show_progress_bar,
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+        )
+        
+        return embeddings
