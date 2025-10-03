@@ -76,20 +76,31 @@ def load_embeddings(embeddings_dir: Path) -> Tuple[np.ndarray, List[str]]:
     """Load embeddings and IDs from disk.
     
     Args:
-        embeddings_dir: Directory containing embeddings.npy and ids.jsonl.
+        embeddings_dir: Directory containing embeddings.npy and ids file.
         
     Returns:
         Tuple of (embeddings, ids).
     """
     embeddings_path = embeddings_dir / "embeddings.npy"
-    ids_path = embeddings_dir / "ids.jsonl"
+    
+    # Try jsonl format first, then fall back to txt
+    ids_jsonl = embeddings_dir / "ids.jsonl"
+    ids_txt = embeddings_dir / "ids.txt"
     
     embeddings = np.load(embeddings_path)
     
     ids = []
-    with open(ids_path, "r") as f:
-        for line in f:
-            ids.append(json.loads(line)["id"])
+    if ids_jsonl.exists():
+        # JSONL format
+        with open(ids_jsonl, "r") as f:
+            for line in f:
+                ids.append(json.loads(line)["id"])
+    elif ids_txt.exists():
+        # Simple text format (one ID per line)
+        with open(ids_txt, "r") as f:
+            ids = [line.strip() for line in f if line.strip()]
+    else:
+        raise FileNotFoundError(f"No ids file found in {embeddings_dir}")
     
     return embeddings, ids
 

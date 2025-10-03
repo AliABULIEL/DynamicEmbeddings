@@ -10,13 +10,13 @@ echo ""
 ARCH=$(uname -m)
 echo "System architecture: $ARCH"
 
-# Check Python architecture
-PY_ARCH=$(python -c "import platform; print(platform.machine())")
-echo "Python architecture: $PY_ARCH"
+# Check python3 architecture
+PY_ARCH=$(python3 -c "import platform; print(platform.machine())")
+echo "python3 architecture: $PY_ARCH"
 
 # Check if architectures match
 if [ "$ARCH" != "$PY_ARCH" ]; then
-    echo "⚠️  WARNING: System and Python architectures don't match!"
+    echo "⚠️  WARNING: System and python3 architectures don't match!"
     echo "   This can cause FAISS crashes."
 fi
 
@@ -24,8 +24,8 @@ echo ""
 
 # Check FAISS installation
 echo "Checking FAISS installation..."
-if python -c "import faiss" 2>/dev/null; then
-    FAISS_VERSION=$(python -c "import faiss; print(faiss.__version__)" 2>/dev/null || echo "unknown")
+if python3 -c "import faiss" 2>/dev/null; then
+    FAISS_VERSION=$(python3 -c "import faiss; print(faiss.__version__)" 2>/dev/null || echo "unknown")
     echo "✅ FAISS installed: version $FAISS_VERSION"
 else
     echo "❌ FAISS not installed"
@@ -36,7 +36,7 @@ echo ""
 
 # Test FAISS
 echo "Testing FAISS basic operations..."
-if python -c "
+if python3 -c "
 import faiss
 import numpy as np
 np.random.seed(42)
@@ -53,15 +53,15 @@ else
     echo ""
     echo "🔧 Attempting to fix..."
     echo ""
-    
+
     # Try reinstalling
     echo "Reinstalling faiss-cpu..."
     pip uninstall -y faiss-cpu
     pip install faiss-cpu --no-cache-dir
-    
+
     echo ""
     echo "Testing again..."
-    if python -c "
+    if python3 -c "
 import faiss
 import numpy as np
 x = np.random.randn(10, 5).astype('float32')
