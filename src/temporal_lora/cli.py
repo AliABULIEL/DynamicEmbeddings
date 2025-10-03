@@ -34,6 +34,41 @@ app = typer.Typer(
 
 
 @app.command()
+def download(
+    max_papers: int = typer.Option(30000, help="Maximum number of papers to generate"),
+    output_dir: Optional[str] = typer.Option(None, help="Output directory (default: data/raw/)"),
+    use_real_api: bool = typer.Option(False, "--real-api/--synthetic", help="Use real arXiv API (not implemented)"),
+) -> None:
+    """Download arXiv dataset with temporal vocabulary shifts."""
+    from .data.download_arxiv import download_and_prepare
+    
+    ensure_dirs()
+    
+    typer.echo("\n" + "="*60)
+    typer.echo("📥 ARXIV DATA DOWNLOAD")
+    typer.echo("="*60 + "\n")
+    
+    output_file = download_and_prepare(
+        max_papers=max_papers,
+        output_dir=output_dir,
+        use_real_api=use_real_api
+    )
+    
+    typer.echo("\n" + "="*60)
+    typer.echo("✅ SUCCESS!")
+    typer.echo("="*60)
+    typer.echo(f"📁 Data saved to: {output_file}")
+    typer.echo("\n🚀 Next Steps:")
+    typer.echo("  1. Preprocess data:")
+    typer.echo("     python -m temporal_lora.cli prepare-data")
+    typer.echo("  2. Train LoRA adapters:")
+    typer.echo("     python -m temporal_lora.cli train-adapters")
+    typer.echo("  3. Build indexes:")
+    typer.echo("     python -m temporal_lora.cli build-indexes")
+    typer.echo("="*60 + "\n")
+
+
+@app.command()
 def env_dump() -> None:
     """Dump environment info (CUDA, packages, git SHA) to deliverables/repro/."""
     ensure_dirs()

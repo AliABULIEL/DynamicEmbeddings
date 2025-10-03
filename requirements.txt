@@ -21,6 +21,7 @@ seaborn==0.13.0
 # Data processing
 numpy==1.26.2
 pandas==2.1.3
+arxiv==2.1.0  # arXiv API for downloading papers
 
 # Testing
 pytest==7.4.3
