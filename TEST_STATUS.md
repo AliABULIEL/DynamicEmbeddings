@@ -1,125 +1,80 @@
-# Test Failures Summary & Fixes
+# Test Status - Updated
 
-## ✅ SOLVED: FAISS Segmentation Faults
-**Status:** All FAISS tests passing (8/8)!
-**Solution:** Added pytest environment config with single-threading + safe test runner script
+## Current Status: 79/90 Tests Passing (87.8%)
+
+### Just Fixed (Ready to Test)
+- Added W&B disable flags to test environment
+- Added tokenizers parallelism disable
+- This should fix 4 additional test failures
 
 ---
 
-## 🔧 REMAINING ISSUES (9 failures)
+## Expected After Running Tests Again
 
-### 1. Missing `accelerate` Package (5 training test failures)
-**Affected tests:**
-- `test_lora_mode_creates_adapters`
+### Should Now Pass (4 tests):
+- `test_lora_mode_creates_adapters` 
 - `test_full_ft_mode_creates_checkpoint`
 - `test_seq_ft_mode_continues_training`
 - `test_train_all_buckets`
-- Plus 1 more
 
-**Error:** `ImportError: Using the 'Trainer' with 'PyTorch' requires 'accelerate>=0.26.0'`
-
-**Solution:**
-```bash
-bash scripts/install_accelerate.sh
-# OR
-pip install "accelerate>=0.26.0"
-```
-
-**Status:** ✅ Dependency added to pyproject.toml, user needs to install
+These were failing on W&B login, now disabled.
 
 ---
 
-### 2. CLI Typer Error (1 failure)
-**Affected test:** `test_cli_help`
+## Remaining Known Issues (5 tests)
 
-**Error:** `TypeError: Secondary flag is not valid for non-boolean flag.`
-
-**Root Cause:** Likely a Typer version compatibility issue with boolean flag syntax.
-
-**Temporary workaround:** This is non-critical for research functionality. The CLI works fine when called directly; it's just the help text generation that fails in tests.
-
-**To skip:** `pytest -k "not test_cli_help"`
-
----
-
-### 3. Import Error (2 failures)
-**Affected tests:**
+### 1. Import Errors (2 tests)
+**Tests:**
 - `test_trainer_initialization`
 - `test_train_tiny_batch`
 
-**Error:** `ImportError: cannot import name 'LoRATrainer' from 'temporal_lora.train.trainer'`
+**Error:** `ImportError: cannot import name 'LoRATrainer'`
 
-**Root Cause:** Tests expect a class named `LoRATrainer`, but the actual class is likely named differently in `trainer.py`.
+**Fix needed:** Tests are trying to import a class name that doesn't exist in the code. Need to check actual class name in `trainer.py`.
 
-**Solution:** Check `src/temporal_lora/train/trainer.py` for the correct class name and update tests.
+### 2. CLI Help Test (1 test)
+**Test:** `test_cli_help`
 
----
+**Error:** `TypeError: Secondary flag is not valid for non-boolean flag`
 
-### 4. Test Logic Issues (2 failures)
+**Status:** Non-critical. CLI works fine in practice, just help generation fails in tests.
+
+### 3. Test Logic Issues (2 tests)
 
 #### a) `test_preprocessing_pipeline`
-**Error:** `assert 1 == 3` (Expected 3 results, got 1)
+**Error:** Expected 3 samples, got 1
 
-**Root Cause:** Preprocessing filters are too aggressive - filtering out too many test samples based on length constraints.
-
-**Solution:** Adjust test data to meet the preprocessing requirements (30-1000 chars) or relax filtering params.
+**Cause:** Test data doesn't meet preprocessing length requirements (30-1000 chars)
 
 #### b) `test_poor_ranking`
-**Error:** `assert 1.0 == 0.5`
+**Error:** Expected recall 0.5, got 1.0
 
-**Root Cause:** Recall calculation logic issue - test expects recall of 0.5 but gets 1.0.
-
-**Solution:** Review recall calculation in test or adjust test expectations.
+**Cause:** Recall calculation or test expectation mismatch
 
 ---
 
-## 📊 Current Test Status
+## Next Steps
 
-```
-PASSED:  79/90 (87.8%)
-FAILED:  9/90 (10.0%)
-SKIPPED: 2/90 (2.2%)
-```
-
-**Breaking down failures:**
-- 5 failures: Missing `accelerate` (easy fix - just install)
-- 1 failure: CLI help (non-critical, can skip)
-- 2 failures: Import naming (needs code inspection)
-- 2 failures: Test logic (needs test fixes)
-
----
-
-## 🎯 Next Steps (Priority Order)
-
-### High Priority (Blocks Training)
-1. **Install accelerate:**
+1. **Run tests again** to confirm W&B fix worked:
    ```bash
-   bash scripts/install_accelerate.sh
+   bash scripts/run_tests.sh
    ```
-   This will fix 5 test failures immediately.
 
-### Medium Priority (Code Quality)
-2. **Fix import errors:** Check trainer.py for correct class names
-3. **Fix test logic:** Update preprocessing and recall tests
+2. **Expected outcome:** 83/90 tests passing (92%)
 
-### Low Priority (Nice to Have)
-4. **Fix CLI help test:** Investigate Typer boolean flag syntax compatibility
+3. **If tests pass as expected**, address remaining 5 failures
 
 ---
 
-## 🚀 Quick Command to Re-Run Tests
+## Progress Summary
 
-After installing accelerate:
-```bash
-# Run all tests
-bash scripts/run_tests.sh
+**Solved issues:**
+- FAISS segmentation faults (8 tests)
+- Missing accelerate dependency (was blocking training)
+- W&B initialization in tests (4 tests - pending verification)
 
-# Run only passing tests
-bash scripts/run_tests.sh -k "not (test_cli_help or test_trainer_initialization or test_train_tiny_batch or test_preprocessing_pipeline or test_poor_ranking)"
-```
+**Remaining work:**
+- Fix 2 import name issues
+- Fix 2 test logic issues  
+- Skip or fix 1 CLI help test (low priority)
 
----
-
-## ✨ Major Win
-
-**FAISS is now 100% working!** This was the hardest issue to solve, and it's completely fixed. The remaining failures are much simpler to address.
