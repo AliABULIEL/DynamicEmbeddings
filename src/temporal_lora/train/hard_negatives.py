@@ -164,7 +164,6 @@ def add_hard_temporal_negatives(
             sampling_strategy="top",  # Take the hardest negatives
             use_faiss=True,  # Use FAISS for speed!
             batch_size=32,
-            relative_margin=0.05,  # Negative should be at least 95% as similar as positive
         )
         
         logger.info(f"✓ Mined {len(mined_dataset)} examples with hard negatives")
