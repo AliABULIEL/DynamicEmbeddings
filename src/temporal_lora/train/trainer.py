@@ -395,21 +395,14 @@ def train_all_buckets(
     bucket_dirs = sorted([d for d in data_dir.iterdir() if d.is_dir()])
     logger.info(f"Found {len(bucket_dirs)} buckets to train")
     
-    # Load hard negatives sampler if needed
-    hard_neg_sampler = None
+    # Prepare for hard negatives if needed
+    all_bins = None
     if use_hard_negatives:
-        from .hard_negatives import HardNegativeSampler
+        from .hard_negatives import add_hard_temporal_negatives
         
         all_bins = [d.name for d in bucket_dirs]
         logger.info(f"✓ Hard temporal negatives enabled (neg_k={neg_k})")
         logger.info(f"Bins (chronological): {all_bins}")
-        
-        hard_neg_sampler = HardNegativeSampler(
-            data_dir=data_dir,
-            all_bins=all_bins,
-            neg_k=neg_k,
-            seed=train_config.get("seed", 42),
-        )
     
     # Train each bucket
     all_metrics = {}
@@ -426,9 +419,14 @@ def train_all_buckets(
             continue
         
         # Augment with hard negatives if enabled
-        if hard_neg_sampler:
-            train_examples = hard_neg_sampler.augment_with_hard_negatives(
-                bucket_name, train_examples
+        if use_hard_negatives and all_bins:
+            train_examples = add_hard_temporal_negatives(
+                data_dir=data_dir,
+                all_bins=all_bins,
+                bucket_name=bucket_name,
+                train_examples=train_examples,
+                neg_k=neg_k,
+                seed=train_config.get("seed", 42),
             )
         
         # Train
